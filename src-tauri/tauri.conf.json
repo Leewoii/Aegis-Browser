@@ -1,0 +1,53 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "SilentX Browser",
+  "version": "2.0.0",
+  "identifier": "com.silentx.browser.v2",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "SilentX Browser",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1024,
+        "minHeight": 720,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": false,
+        "visible": true,
+        "backgroundColor": "#04050a"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' https://*.duckduckgo.com https://*.google.com https://*.bing.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https:; font-src 'self' data:; media-src 'self' https:; frame-src 'self' https:; object-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": false,
+    "targets": ["msi", "nsis"],
+    "windows": {
+      "wix": null,
+      "nsis": null
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "publisher": "SilentX",
+    "copyright": "Copyright (c) 2026 SilentX",
+    "category": "DeveloperTool",
+    "shortDescription": "A productivity-focused desktop web browser",
+    "longDescription": "SilentX Browser embeds commonly-used web apps into sidebar panels, reducing tab clutter and context-switching."
+  }
+}

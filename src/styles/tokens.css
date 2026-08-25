@@ -1,0 +1,79 @@
+/* ── SilentX V2 Design Tokens ─────────────────────────────────────── */
+
+:root {
+  /* Accent palette — blue / cyan / violet */
+  --accent-a: #6e9bff;
+  --accent-b: #a78bfa;
+  --accent-c: #7de3ff;
+  --accent-gradient: linear-gradient(135deg, var(--accent-c), var(--accent-a) 50%, var(--accent-b));
+  --accent-glow: rgba(110, 140, 255, 0.32);
+
+  /* Typography */
+  --font-ui:
+    "Inter", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI",
+    "Helvetica Neue", system-ui, sans-serif;
+
+  /* Geometry */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-window: 22px;
+  --tab-radius: 11px;
+  --chrome-height: 44px;
+  --subbar-height: 36px;
+  --sidebar-collapsed-width: 52px;
+  --sidebar-expanded-width: 240px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0.9, 0.3, 1);
+  --speed-fast: 140ms;
+  --speed-med: 220ms;
+
+  /* Semantic (dark theme defaults — near-black, blue/violet undertones) */
+  --bg-window: #06070c;
+  --bg-chrome: rgba(13, 16, 26, 0.72);
+  --bg-content-top: #080a12;
+  --bg-content: #04050a;
+  --bg-elevated: rgba(17, 21, 34, 0.95);
+  --bg-sidebar: rgba(10, 12, 20, 0.85);
+  --bg-tab-active: rgba(18, 22, 36, 0.92);
+  --bg-input: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --border-frame: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-tab-active: rgba(255, 255, 255, 0.09);
+  --text-primary: #f1f3f9;
+  --text-secondary: #9aa2b8;
+  --text-muted: #5e667b;
+  --shadow-window:
+    0 32px 100px rgba(0, 0, 0, 0.75),
+    0 8px 30px rgba(0, 0, 0, 0.5);
+  --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-dropdown: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="amoled"] {
+  --bg-window: #000000;
+  --bg-chrome: rgba(8, 9, 13, 0.85);
+  --bg-content-top: #050609;
+  --bg-content: #000000;
+  --bg-elevated: rgba(12, 13, 19, 0.97);
+  --border-frame: rgba(148, 163, 196, 0.13);
+  --shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.85);
+}
+
+[data-theme="nord"] {
+  --accent-a: #88c0d0;
+  --accent-b: #b48ead;
+  --accent-c: #8fbcbb;
+  --bg-window: #20242e;
+  --bg-chrome: rgba(46, 52, 64, 0.85);
+  --bg-content-top: #2b3140;
+  --bg-content: #272c38;
+  --bg-elevated: rgba(52, 60, 74, 0.96);
+  --text-primary: #eceff4;
+  --text-secondary: #aeb7c9;
+  --text-muted: #6f7a90;
+}

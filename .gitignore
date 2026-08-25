@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+coverage/
+
+# Tauri / Rust build output
+src-tauri/target/
+
+# Generated or local tooling caches
+.vite/
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor / IDE settings
+.vscode/
+.idea/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
