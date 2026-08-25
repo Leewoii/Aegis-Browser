@@ -9,12 +9,23 @@
     radial-gradient(120% 120% at 50% 15%, rgba(110, 155, 255, 0.04) 0%, transparent 60%),
     radial-gradient(80% 60% at 85% 90%, rgba(167, 139, 250, 0.035) 0%, transparent 50%),
     var(--bg-window);
-  border: 1px solid var(--border-frame);
+  border: 1px solid transparent;
   border-radius: var(--radius-window);
-  box-shadow: var(--shadow-window);
+  box-shadow: none;
   overflow: hidden;
   position: relative;
   user-select: none;
+  background-clip: padding-box;
+}
+
+.app-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0px var(--border-frame);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .main-content-column {
@@ -25,6 +36,7 @@
   height: 100%;
   position: relative;
   overflow: hidden;
+  z-index: 0;
 }
 
 /* ── Top Chrome Bar ───────────────────────────────────────────────── */
