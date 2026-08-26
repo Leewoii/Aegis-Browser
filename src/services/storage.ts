@@ -201,6 +201,26 @@ async function migrateV1ToV2(database: SqliteDatabase): Promise<void> {
         started_at INTEGER NOT NULL DEFAULT 0,
         completed_at INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        visited_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS bookmarks (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        url TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `,
   );
 
