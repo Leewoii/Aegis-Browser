@@ -1,4 +1,4 @@
-﻿/// JavaScript injected into child webviews (tabs and panels) on page load.
+/// JavaScript injected into child webviews (tabs and panels) on page load.
 ///
 /// Intercepts `target="_blank"` links, `window.open()` calls and blank-target
 /// form submissions. Instead of spawning a new window, the webview navigates
@@ -235,8 +235,57 @@ const INTERCEPTION_SCRIPT: &str = r#"
   window.addEventListener('scroll', removeContextMenu, true);
   window.addEventListener('resize', removeContextMenu, true);
   window.addEventListener('blur', removeContextMenu, true);
+
+  // 5. Forward browser keyboard shortcuts to the main Aegis window.
+  //    When the child webview has focus, key events never reach the React layer.
+  //    We intercept them here and signal Aegis via sx-internal://.
+  function sxSignal(action) {
+    try {
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://shortcut?action=' + action + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function() { if (a && a.parentNode) a.parentNode.removeChild(a); }, 100);
+    } catch(_) {}
+  }
+
   window.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') removeContextMenu();
+    if (e.key === 'Escape') { removeContextMenu(); return; }
+
+    var ctrl = e.ctrlKey || e.metaKey;
+    if (!ctrl) return;
+
+    if (e.key === 'w' || e.key === 'W') {
+      e.preventDefault();
+      e.stopPropagation();
+      sxSignal('close-tab');
+      return;
+    }
+    if (e.key === 't' || e.key === 'T') {
+      e.preventDefault();
+      e.stopPropagation();
+      sxSignal('new-tab');
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      sxSignal(e.shiftKey ? 'prev-tab' : 'next-tab');
+      return;
+    }
+    if (e.key === 'r' || e.key === 'R') {
+      e.preventDefault();
+      e.stopPropagation();
+      sxSignal('reload');
+      return;
+    }
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      e.stopPropagation();
+      sxSignal('focus-url');
+      return;
+    }
   }, true);
 })();
 "#;

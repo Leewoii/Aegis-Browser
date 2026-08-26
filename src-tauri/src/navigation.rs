@@ -115,6 +115,20 @@ pub fn aegis_navigation_plugin(
         return false;
       }
 
+      // Keyboard shortcut forwarded from child webview (Ctrl+W, Ctrl+T, Ctrl+Tab, Ctrl+R, Ctrl+L)
+      if url_string.starts_with("sx-internal://shortcut") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          for (k, v) in parsed.query_pairs() {
+            if k == "action" && !v.is_empty() {
+              println!("[Aegis-nav] SHORTCUT label={} action={}", label, v);
+              let _ = window.emit_to("main", "Aegis-shortcut", &v.to_string());
+              break;
+            }
+          }
+        }
+        return false;
+      }
+
       let mut nav = state_for_nav.lock();
 
       // Allow redirects shortly after a frontend-initiated navigation.

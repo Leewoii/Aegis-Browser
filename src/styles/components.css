@@ -933,13 +933,46 @@
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
   outline: none;
   cursor: pointer;
+  color-scheme: dark;
   transition: border-color var(--speed-fast) ease;
 }
 
 .settings-option select:focus {
   border-color: var(--accent-a);
+}
+
+.settings-option select option {
+  background-color: #1a1f36 !important;
+  color: #eef1f8 !important;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+
+.settings-option select option:checked,
+.settings-option select option:hover {
+  background-color: #242b4a !important;
+  color: #ffffff !important;
+}
+
+[data-theme="amoled"] .settings-option select {
+  color-scheme: dark;
+}
+
+[data-theme="amoled"] .settings-option select option {
+  background-color: #10131d !important;
+}
+
+[data-theme="nord"] .settings-option select {
+  color-scheme: dark;
+}
+
+[data-theme="nord"] .settings-option select option {
+  background-color: #2e3440 !important;
+  color: #eceff4;
 }
 
 .settings-text-input {

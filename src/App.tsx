@@ -664,6 +664,58 @@ export default function App() {
     };
   }, []);
 
+  // Refs so Aegis-shortcut listener always has fresh action callbacks without re-registering
+  const closeTabRef = useRef(() => closeTab(activeTabId));
+  closeTabRef.current = () => closeTab(activeTabId);
+  const createHomeTabRef = useRef(() => createHomeTab());
+  createHomeTabRef.current = () => createHomeTab();
+  const reloadActiveRef = useRef(() => reloadActive());
+  reloadActiveRef.current = () => reloadActive();
+  const focusOmniboxRef = useRef(() => {
+    const input = document.querySelector<HTMLInputElement>(".omnibox-input");
+    input?.focus();
+    input?.select();
+  });
+  const tabsRef2 = useRef(tabs);
+  tabsRef2.current = tabs;
+  const activeTabIdRef2 = useRef(activeTabId);
+  activeTabIdRef2.current = activeTabId;
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen<string>("Aegis-shortcut", (event) => {
+      if (disposed) return;
+      const action = event.payload;
+      if (action === "close-tab") {
+        closeTabRef.current();
+      } else if (action === "new-tab") {
+        createHomeTabRef.current();
+      } else if (action === "reload") {
+        reloadActiveRef.current();
+      } else if (action === "focus-url") {
+        focusOmniboxRef.current();
+      } else if (action === "next-tab") {
+        const all = tabsRef2.current;
+        const idx = all.findIndex((t) => t.id === activeTabIdRef2.current);
+        if (idx !== -1) setActiveTabId(all[(idx + 1) % all.length].id);
+      } else if (action === "prev-tab") {
+        const all = tabsRef2.current;
+        const idx = all.findIndex((t) => t.id === activeTabIdRef2.current);
+        if (idx !== -1) setActiveTabId(all[(idx - 1 + all.length) % all.length].id);
+      }
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     const cleanups: Array<() => void> = [];
