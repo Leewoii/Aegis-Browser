@@ -48,6 +48,31 @@ const INTERCEPTION_SCRIPT: &str = r#"
     }
   }
 
+  function sxTriggerDownload(url) {
+    var fullUrl = sxResolveUrl(url);
+    if (!fullUrl) return;
+    try {
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://download?url=' + encodeURIComponent(fullUrl) + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function() {
+        if (a && a.parentNode) a.parentNode.removeChild(a);
+      }, 100);
+    } catch(e) {
+      console.error('[sx-intercept] Failed to trigger download:', e);
+    }
+  }
+
+  function isDownloadUrl(url) {
+    if (!url) return false;
+    var lower = url.toLowerCase();
+    if (lower.indexOf('response-content-disposition=attachment') !== -1 || lower.indexOf('rscd=attachment') !== -1) return true;
+    var withoutQuery = lower.split('?')[0].split('#')[0];
+    return /\.(exe|msi|zip|7z|rar|tar\.gz|tgz|dmg|pkg|deb|rpm|appimage|iso|pdf|msix|apk)(\?.*)?$/i.test(withoutQuery);
+  }
+
   // 1. Intercept window.open
   window.open = function(url) {
     if (url) {
@@ -57,12 +82,25 @@ const INTERCEPTION_SCRIPT: &str = r#"
   };
 
   // 2. Intercept link clicks:
+  // - download attribute or download-like URL -> trigger download
   // - Ctrl + Left Click (Windows/Linux) or Cmd + Left Click (Mac)
   // - Middle Click (auxclick / button === 1)
   // - target="_blank" or target="_new"
   function handleLinkClick(e) {
     var a = e.target && e.target.closest ? e.target.closest('a') : null;
     if (!a || !a.href) return;
+
+    // Download handling takes priority
+    if (a.hasAttribute('download') || isDownloadUrl(a.href)) {
+      // Only intercept normal left clicks for downloads (not ctrl/middle which is new tab)
+      var isPlainLeftClick = e.button === 0 && !e.ctrlKey && !e.metaKey;
+      if (isPlainLeftClick && e.type === 'click') {
+        e.preventDefault();
+        e.stopPropagation();
+        sxTriggerDownload(a.href);
+        return;
+      }
+    }
 
     var isCtrlOrCmd = e.ctrlKey || e.metaKey;
     var isMiddleClick = e.button === 1 || e.which === 2;
@@ -287,6 +325,34 @@ const INTERCEPTION_SCRIPT: &str = r#"
       return;
     }
   }, true);
+
+  // 6. Notify main window of document title for history / tab title.
+  function sxNotifyTitle() {
+    try {
+      var t = (document.title || '').trim();
+      if (!t) return;
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://page-title?title=' + encodeURIComponent(t) + '&url=' + encodeURIComponent(window.location.href) + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function(){ if(a && a.parentNode) a.parentNode.removeChild(a); }, 100);
+    } catch(_){}
+  }
+  if (document.readyState === 'complete') sxNotifyTitle();
+  else window.addEventListener('load', sxNotifyTitle, {once:true});
+  // Observe title element changes (SPA navigations update document.title without reload)
+  try {
+    var titleEl = document.querySelector('title');
+    if (titleEl) {
+      new MutationObserver(sxNotifyTitle).observe(titleEl, {childList:true, subtree:true, characterData:true});
+    } else if (document.head) {
+      new MutationObserver(function(){ var el=document.querySelector('title'); if(el) sxNotifyTitle(); }).observe(document.head, {childList:true, subtree:true});
+    }
+    document.addEventListener('DOMContentLoaded', sxNotifyTitle, {once:true});
+  } catch(_){}
+  setTimeout(sxNotifyTitle, 800);
+  setTimeout(sxNotifyTitle, 2000);
 })();
 "#;
 

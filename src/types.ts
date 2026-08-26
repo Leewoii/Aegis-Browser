@@ -130,6 +130,7 @@ export type PanelId =
   | "whatsapp"
   | "spotify"
   | "notes"
+  | "terminal"
   | "workspaces";
 
 export const isWebAppPanel = (panel: PanelId): boolean => panel in WEB_APP_PANELS;
@@ -145,5 +146,6 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   whatsapp: "WhatsApp",
   spotify: "Spotify",
   notes: "Scratchpad",
+  terminal: "Terminal",
   workspaces: "Workspaces",
 };

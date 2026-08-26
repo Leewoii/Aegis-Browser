@@ -3,6 +3,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { Check, Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 
+import packageJson from "../../package.json";
+
 type UpdateState = "checking" | "current" | "available" | "downloading" | "error";
 
 function releaseNotes(notes?: string): string[] {
@@ -13,7 +15,7 @@ function releaseNotes(notes?: string): string[] {
 }
 
 export function UpdatesScreen() {
-  const [currentVersion, setCurrentVersion] = useState("1.0.0");
+  const [currentVersion, setCurrentVersion] = useState(packageJson.version || "1.2.2");
   const [update, setUpdate] = useState<Update | null>(null);
   const [state, setState] = useState<UpdateState>("checking");
   const [error, setError] = useState("");
@@ -27,9 +29,9 @@ export function UpdatesScreen() {
     // Always resolve current version independently — a failing updater check (404 in dev / no release yet) must not hide the installed version.
     try {
       const version = await getVersion();
-      setCurrentVersion(version);
+      if (version) setCurrentVersion(version);
     } catch {
-      // Keep fallback "1.0.0" if app version is unavailable (e.g. missing permission).
+      // Fallback to package.json version
     }
 
     try {

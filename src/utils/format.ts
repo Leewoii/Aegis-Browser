@@ -9,6 +9,11 @@ export function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+export function formatDateTime(timestamp: number): string {
+  const d = new Date(timestamp);
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 export function formatDayGroup(timestamp: number): string {
   const date = new Date(timestamp);
   const today = new Date();

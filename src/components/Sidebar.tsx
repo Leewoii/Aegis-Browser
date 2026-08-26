@@ -91,30 +91,30 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
   const getWorkspaceIcon = (iconName?: string) => {
     switch (iconName) {
       case "code":
-        return <Terminal size={16} strokeWidth={1.8} />;
+        return <Terminal size={18} strokeWidth={1.8} />;
       case "shield":
-        return <Shield size={16} strokeWidth={1.8} />;
+        return <Shield size={18} strokeWidth={1.8} />;
       case "sparkles":
-        return <Sparkles size={16} strokeWidth={1.8} />;
+        return <Sparkles size={18} strokeWidth={1.8} />;
       case "briefcase":
-        return <Briefcase size={16} strokeWidth={1.8} />;
+        return <Briefcase size={18} strokeWidth={1.8} />;
       case "globe":
-        return <Globe size={16} strokeWidth={1.8} />;
+        return <Globe size={18} strokeWidth={1.8} />;
       case "compass":
-        return <Compass size={16} strokeWidth={1.8} />;
+        return <Compass size={18} strokeWidth={1.8} />;
       case "folder":
-        return <FolderLock size={16} strokeWidth={1.8} />;
+        return <FolderLock size={18} strokeWidth={1.8} />;
       case "gamepad":
-        return <Gamepad2 size={16} strokeWidth={1.8} />;
+        return <Gamepad2 size={18} strokeWidth={1.8} />;
       case "cpu":
-        return <Cpu size={16} strokeWidth={1.8} />;
+        return <Cpu size={18} strokeWidth={1.8} />;
       case "flame":
-        return <Flame size={16} strokeWidth={1.8} />;
+        return <Flame size={18} strokeWidth={1.8} />;
       case "palette":
-        return <Palette size={16} strokeWidth={1.8} />;
+        return <Palette size={18} strokeWidth={1.8} />;
       case "user":
       default:
-        return <User size={16} strokeWidth={1.8} />;
+        return <User size={18} strokeWidth={1.8} />;
     }
   };
 
@@ -149,7 +149,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Home Screen"
           >
             <span className="sidebar-icon">
-              <Home size={16} strokeWidth={1.8} />
+              <Home size={18} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Home</span>}
           </button>
@@ -244,7 +244,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="ChatGPT Assistant"
           >
             <span className="sidebar-icon">
-              <ChatGptIcon size={16} />
+              <ChatGptIcon size={18} />
             </span>
             {expanded && <span className="sidebar-label">ChatGPT</span>}
           </button>
@@ -255,7 +255,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Scratchpad Notes"
           >
             <span className="sidebar-icon">
-              <PenLine size={15} strokeWidth={1.8} />
+              <PenLine size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Scratchpad</span>}
           </button>
@@ -266,7 +266,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Bookmarks"
           >
             <span className="sidebar-icon">
-              <Bookmark size={15} strokeWidth={1.8} />
+              <Bookmark size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Bookmarks</span>}
           </button>
@@ -277,7 +277,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="History"
           >
             <span className="sidebar-icon">
-              <Clock3 size={15} strokeWidth={1.8} />
+              <Clock3 size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">History</span>}
           </button>
@@ -288,9 +288,20 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Downloads"
           >
             <span className="sidebar-icon">
-              <Download size={15} strokeWidth={1.8} />
+              <Download size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Downloads</span>}
+          </button>
+
+          <button
+            className={`sidebar-item ${activePanel === "terminal" ? "active" : ""}`}
+            onClick={() => onTogglePanel("terminal")}
+            title="Terminal — PowerShell / Command Prompt"
+          >
+            <span className="sidebar-icon">
+              <Terminal size={17} strokeWidth={1.8} />
+            </span>
+            {expanded && <span className="sidebar-label">Terminal</span>}
           </button>
         </div>
 
@@ -309,7 +320,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Spotify"
           >
             <span className="sidebar-icon">
-              <SpotifyIcon size={15} />
+              <SpotifyIcon size={17} />
             </span>
             {expanded && <span className="sidebar-label">Spotify</span>}
           </button>
@@ -320,7 +331,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Twitch"
           >
             <span className="sidebar-icon">
-              <Twitch size={15} strokeWidth={1.8} />
+              <Twitch size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Twitch</span>}
           </button>
@@ -331,7 +342,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Messenger"
           >
             <span className="sidebar-icon">
-              <MessengerIcon size={15} />
+              <MessengerIcon size={17} />
             </span>
             {expanded && <span className="sidebar-label">Messenger</span>}
           </button>
@@ -342,7 +353,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="WhatsApp"
           >
             <span className="sidebar-icon">
-              <WhatsAppIcon size={15} />
+              <WhatsAppIcon size={17} />
             </span>
             {expanded && <span className="sidebar-label">WhatsApp</span>}
           </button>
@@ -358,7 +369,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Developer & Debugging Console"
           >
             <span className="sidebar-icon">
-              <Terminal size={15} strokeWidth={1.8} />
+              <Terminal size={17} strokeWidth={1.8} />
               {!expanded && errorCount > 0 && (
                 <span
                   className="sidebar-badge error icon-corner"
@@ -385,7 +396,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Check for updates"
           >
             <span className="sidebar-icon">
-              <RefreshCw size={15} strokeWidth={1.8} />
+              <RefreshCw size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Updates</span>}
           </button>
@@ -396,7 +407,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
             title="Settings"
           >
             <span className="sidebar-icon">
-              <SettingsIcon size={15} strokeWidth={1.8} />
+              <SettingsIcon size={17} strokeWidth={1.8} />
             </span>
             {expanded && <span className="sidebar-label">Settings</span>}
           </button>

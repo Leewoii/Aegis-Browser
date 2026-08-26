@@ -36,6 +36,28 @@ fn redact_url(raw: &str) -> String {
   raw.to_string()
 }
 
+fn is_download_url(url: &str) -> bool {
+  let lower = url.to_lowercase();
+  if lower.contains("response-content-disposition=attachment")
+    || lower.contains("rscd=attachment")
+    || lower.contains("content-disposition=attachment")
+  {
+    return true;
+  }
+  // Strip query and fragment for extension check
+  let without_query = lower.split(['?', '#']).next().unwrap_or(&lower);
+  const DOWNLOAD_EXTS: &[&str] = &[
+    ".exe", ".msi", ".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".dmg", ".pkg", ".deb", ".rpm",
+    ".appimage", ".iso", ".pdf", ".msix", ".apk",
+  ];
+  for ext in DOWNLOAD_EXTS {
+    if without_query.ends_with(ext) {
+      return true;
+    }
+  }
+  false
+}
+
 /// True when two URLs resolve to the same host (ignoring the `www.` prefix).
 /// Unparseable URLs fall back to exact string comparison.
 fn urls_share_host(a: &str, b: &str) -> bool {
@@ -126,6 +148,45 @@ pub fn aegis_navigation_plugin(
             }
           }
         }
+        return false;
+      }
+
+      // Download request from child webview (anchor with [download] or detected attachment)
+      if url_string.starts_with("sx-internal://download") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          for (k, v) in parsed.query_pairs() {
+            if k == "url" && !v.is_empty() {
+              println!("[Aegis-nav] DOWNLOAD_REQUEST label={} url={}", label, redact_url(&v));
+              let _ = window.emit_to("main", "Aegis-download", &v.to_string());
+              break;
+            }
+          }
+        }
+        return false;
+      }
+
+      // Page title notification from child webview
+      if url_string.starts_with("sx-internal://page-title") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          let mut title: Option<String> = None;
+          let mut page_url: Option<String> = None;
+          for (k, v) in parsed.query_pairs() {
+            if k == "title" { title = Some(v.to_string()); }
+            if k == "url" { page_url = Some(v.to_string()); }
+          }
+          if let (Some(t), Some(u)) = (title, page_url) {
+            if !t.trim().is_empty() && !u.trim().is_empty() {
+              let _ = window.emit_to("main", "Aegis-page-title", serde_json::json!({ "title": t, "url": u, "label": label }));
+            }
+          }
+        }
+        return false;
+      }
+
+      // Direct download URL detected (GitHub release assets, .exe/.zip etc.)
+      if is_download_url(&url_string) {
+        println!("[Aegis-nav] DOWNLOAD_DETECTED label={} url={}", label, redact_url(&url_string));
+        let _ = window.emit_to("main", "Aegis-download", &url_string);
         return false;
       }
 

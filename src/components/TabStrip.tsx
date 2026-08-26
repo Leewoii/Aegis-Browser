@@ -401,6 +401,7 @@ export function TabStrip({
             return null;
           }
 
+          const isFirstTab = tabIdx === 0;
           return (
             <div
               key={tab.id}
@@ -427,10 +428,10 @@ export function TabStrip({
                 });
               }}
             >
-              {isActive && (
-                <svg className="tab-curve-left" viewBox="0 0 14 14" aria-hidden="true">
-                  <path className="tab-curve-fill" d="M14 0C14 7.7 7.7 14 0 14H14V0Z" />
-                  <path className="tab-curve-stroke" d="M14 0C14 7.7 7.7 14 0 14" />
+              {isActive && !isFirstTab && (
+                <svg className="tab-curve-left" viewBox="0 0 12 12" aria-hidden="true">
+                  <path className="tab-curve-fill" d="M12 0 A12 12 0 0 1 0 12 H12 V0 Z" />
+                  <path className="tab-curve-stroke" d="M12 0 A12 12 0 0 1 0 12" />
                 </svg>
               )}
               <div
@@ -462,7 +463,7 @@ export function TabStrip({
                         }}
                         title={`Close ${tab.title}`}
                       >
-                        <X size={10} strokeWidth={2} />
+                        <X size={12} strokeWidth={2} />
                       </span>
                     </div>
 
@@ -490,7 +491,7 @@ export function TabStrip({
                         }}
                         title={`Close ${partnerTab.title}`}
                       >
-                        <X size={10} strokeWidth={2} />
+                        <X size={12} strokeWidth={2} />
                       </span>
                     </div>
                   </div>
@@ -505,7 +506,7 @@ export function TabStrip({
 
                 {isTarget && isGroupingPreview && (
                   <span className="group-preview-badge" title="Release to group tabs">
-                    <Layers size={10} strokeWidth={2.4} />
+                    <Layers size={12} strokeWidth={2.4} />
                     <span>Group</span>
                   </span>
                 )}
@@ -519,14 +520,14 @@ export function TabStrip({
                     }}
                     title="Close tab"
                   >
-                    <X size={11} />
+                    <X size={13} />
                   </span>
                 )}
               </div>
               {isActive && (
-                <svg className="tab-curve-right" viewBox="0 0 14 14" aria-hidden="true">
-                  <path className="tab-curve-fill" d="M0 0C0 7.7 6.3 14 14 14H0V0Z" />
-                  <path className="tab-curve-stroke" d="M0 0C0 7.7 6.3 14 14 14" />
+                <svg className="tab-curve-right" viewBox="0 0 12 12" aria-hidden="true">
+                  <path className="tab-curve-fill" d="M0 0 A12 12 0 0 0 12 12 H0 V0 Z" />
+                  <path className="tab-curve-stroke" d="M0 0 A12 12 0 0 0 12 12" />
                 </svg>
               )}
             </div>
@@ -534,7 +535,7 @@ export function TabStrip({
         })}
 
         <button className="tab-plus-btn no-drag" onClick={onNewTab} title="New tab (Ctrl+T)">
-          <Plus size={14} strokeWidth={2} />
+          <Plus size={16} strokeWidth={2} />
         </button>
       </div>
 

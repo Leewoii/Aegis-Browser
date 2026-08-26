@@ -3,8 +3,10 @@
 .app-container {
   display: flex;
   flex-direction: row;
-  height: 100vh;
-  width: 100vw;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
   background:
     radial-gradient(120% 120% at 50% 15%, rgba(110, 155, 255, 0.04) 0%, transparent 60%),
     radial-gradient(80% 60% at 85% 90%, rgba(167, 139, 250, 0.035) 0%, transparent 50%),
@@ -28,6 +30,78 @@
   z-index: 1;
 }
 
+/* ── Frameless window resize handles ───────────────────────────────── */
+.window-resize-handle {
+  position: absolute;
+  z-index: 9999;
+  /* invisible but hit-testable */
+  background: transparent;
+}
+
+.window-resize-handle.top {
+  top: 0;
+  left: 6px;
+  right: 6px;
+  height: 4px;
+  cursor: n-resize;
+}
+
+.window-resize-handle.bottom {
+  bottom: 0;
+  left: 6px;
+  right: 6px;
+  height: 6px;
+  cursor: s-resize;
+}
+
+.window-resize-handle.left {
+  top: 6px;
+  bottom: 6px;
+  left: 0;
+  width: 4px;
+  cursor: w-resize;
+}
+
+.window-resize-handle.right {
+  top: 6px;
+  bottom: 6px;
+  right: 0;
+  width: 4px;
+  cursor: e-resize;
+}
+
+.window-resize-handle.top-left {
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  cursor: nw-resize;
+}
+
+.window-resize-handle.top-right {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  cursor: ne-resize;
+}
+
+.window-resize-handle.bottom-left {
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  cursor: sw-resize;
+}
+
+.window-resize-handle.bottom-right {
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  cursor: se-resize;
+}
+
 .main-content-column {
   display: flex;
   flex-direction: column;
@@ -49,7 +123,21 @@
   background: var(--bg-chrome);
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: none;
+  overflow: hidden;
+}
+
+/* Full window-width bottom baseline line across the entire header bar */
+.chrome::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.20);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .chrome-row {
@@ -80,8 +168,8 @@
 }
 
 .window-dot {
-  width: 11.5px;
-  height: 11.5px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   border: none;
   cursor: pointer;
@@ -284,16 +372,16 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 31px;
-  max-width: 175px;
-  padding: 0 11px;
+  gap: 9px;
+  height: 33px;
+  max-width: 190px;
+  padding: 0 12px;
   margin-bottom: 5px;
   border-radius: var(--tab-radius);
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -316,35 +404,51 @@
 }
 
 .tab.active {
-  height: 36px;
+  position: relative;
+  z-index: 1;
+  height: 38px;
   margin-bottom: -1px;
   border-radius: 12px 12px 0 0;
   background: var(--bg-tab-active);
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  border-bottom: 1px solid var(--bg-tab-active);
+  border: none;
   color: var(--text-primary);
   font-weight: 600;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.25);
+  box-shadow:
+    0 -2px 10px rgba(0, 0, 0, 0.25),
+    0 1px 0 var(--bg-tab-active);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
+}
+
+.tab.active::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  pointer-events: none;
 }
 
 /* Seamless inverted corner fillets connecting active tab to content bottom */
 .tab-curve-left,
 .tab-curve-right {
   position: absolute;
-  bottom: -1px;
-  width: 14px;
-  height: 14px;
+  bottom: 0px;
+  width: 12px;
+  height: 12px;
   pointer-events: none;
+  z-index: 12;
+  shape-rendering: geometricPrecision;
 }
 
 .tab-curve-left {
-  left: -14px;
+  left: -11px;
 }
 
 .tab-curve-right {
-  right: -14px;
+  right: -11px;
 }
 
 .tab-curve-fill {
@@ -355,6 +459,10 @@
   fill: none;
   stroke: rgba(255, 255, 255, 0.32);
   stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  shape-rendering: geometricPrecision;
+  vector-effect: non-scaling-stroke;
 }
 
 .tab-icon {
@@ -366,14 +474,14 @@
 .tab-title {
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .tab-close {
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 4px;
   color: inherit;
   opacity: 0.45;
@@ -394,8 +502,8 @@
 .tab-plus-btn {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   margin-bottom: 7px;
   margin-left: 2px;
   border-radius: 50%;
@@ -464,12 +572,23 @@
   z-index: 25;
   height: 100%;
   background: var(--bg-sidebar);
-  border-right: 1px solid var(--border-subtle);
+  border-right: none;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   transition: width var(--speed-med) var(--ease-out), transform var(--speed-med) var(--ease-out);
   overflow: hidden;
-  flex-shrink: 0;
+  border-radius: var(--radius-window) 0 0 var(--radius-window);
+}
+
+.sidebar-shell::after {
+  content: "";
+  position: absolute;
+  top: var(--radius-window);
+  right: 0;
+  bottom: var(--radius-window);
+  width: 1px;
+  background: var(--border-subtle);
+  pointer-events: none;
 }
 
 .sidebar-shell.collapsed {
@@ -501,7 +620,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px 4px;
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -545,7 +664,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 34px;
+  height: 36px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -593,7 +712,7 @@
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
 }
 
@@ -652,7 +771,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  height: 32px;
+  height: 34px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -689,7 +808,7 @@
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -734,6 +853,11 @@
 .sub-toolbar-spacer {
   flex: 1;
   min-width: 10px;
+}
+
+.sub-toolbar:has(.omnibox-wrapper) .sub-toolbar-spacer {
+  flex: 0 0 8px;
+  min-width: 8px;
 }
 
 .nav-cluster {
@@ -802,8 +926,8 @@
 .nav-btn {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: transparent;
   border: none;

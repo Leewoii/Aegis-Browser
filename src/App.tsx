@@ -664,6 +664,32 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void listen<string>("Aegis-download", (event) => {
+      const url = event.payload;
+      if (typeof url !== "string" || !url.trim()) return;
+      try {
+        downloadManager.handleExternalDownload(url);
+        showToast("Download started", "info");
+        setActivePanel("downloads");
+        setIsPanelPinned(true);
+      } catch (e) {
+        console.error("Failed to handle download", e);
+      }
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
   // Refs so Aegis-shortcut listener always has fresh action callbacks without re-registering
   const closeTabRef = useRef(() => closeTab(activeTabId));
   closeTabRef.current = () => closeTab(activeTabId);
@@ -761,6 +787,42 @@ export default function App() {
           );
         }
       }
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+
+    void listen<{ title: string; url: string; label: string }>("Aegis-page-title", (event) => {
+      if (disposed) return;
+      const { title, url, label } = event.payload || ({} as any);
+      if (!title || !url || !label) return;
+      const cleanTitle = title.trim().slice(0, 200);
+      if (!cleanTitle) return;
+      // Update tab title if the webview label matches and URL is still current
+      setTabs((prev) =>
+        prev.map((tab) => {
+          if (tab.label === label) {
+            // Only update if URL matches or tab is still on that URL (handles SPA title changes)
+            return { ...tab, title: cleanTitle };
+          }
+          return tab;
+        }),
+      );
+      // Update the most recent history entry for this URL with the real page title
+      setHistoryEntries((prev) => {
+        if (prev.length === 0) return prev;
+        // History is ordered newest-first; find the latest entry for this URL that still has a generic title
+        const idx = prev.findIndex((h) => h.url === url);
+        if (idx === -1) return prev;
+        const existing = prev[idx];
+        const isGeneric = existing.title === titleFromUrl(existing.url) || existing.title === existing.url;
+        // Only overwrite generic/hostname titles or when new title is more descriptive
+        if (isGeneric || cleanTitle.length > existing.title.length) {
+          const next = [...prev];
+          next[idx] = { ...existing, title: cleanTitle };
+          // Persist the corrected title
+          void appendHistory({ url, title: cleanTitle, visitedAt: existing.visitedAt });
+          return next;
+        }
+        return prev;
+      });
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
     return () => {
@@ -1425,6 +1487,13 @@ export default function App() {
 
   function togglePanel(panel: PanelId) {
     if (!isSidebarPinned) setIsSidebarHovered(false);
+    const willOpen = activePanel !== panel;
+    if (willOpen && isWebAppPanel(panel) && panelWidthRef.current < 400) {
+      setPanelWidth(400);
+      panelWidthRef.current = 400;
+      // allow panel to open before syncing webview bounds
+      setTimeout(() => void scheduleSyncActive(), 50);
+    }
     setActivePanel((prev) => (prev === panel ? null : panel));
   }
 
@@ -1469,6 +1538,15 @@ export default function App() {
     window.addEventListener("mouseup", stopResize);
   }
 
+  // Auto-expand panel width for web-app panels (Spotify/WhatsApp) that are cramped at 340px
+  useEffect(() => {
+    if (activePanel && isWebAppPanel(activePanel) && panelWidth < 400) {
+      setPanelWidth(400);
+      panelWidthRef.current = 400;
+      scheduleSyncActive();
+    }
+  }, [activePanel, panelWidth, scheduleSyncActive]);
+
   // ── Window controls & window dragging ─────────────────────────────
 
   const closeWindow = useCallback(() => getCurrentWindow().close(), []);
@@ -1487,6 +1565,17 @@ export default function App() {
     }
     void getCurrentWindow().startDragging();
   }, []);
+
+  const handleWindowResize = useCallback(
+    (dir: "North" | "South" | "East" | "West" | "NorthEast" | "NorthWest" | "SouthEast" | "SouthWest") =>
+      (e: React.MouseEvent) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void getCurrentWindow().startResizeDragging(dir as any);
+      },
+    [],
+  );
 
   // ── Keyboard shortcuts ────────────────────────────────────────────
 
@@ -1530,6 +1619,15 @@ export default function App() {
 
   return (
     <div className="app-container">
+      {/* ── Frameless window resize handles (all edges + corners) ── */}
+      <div className="window-resize-handle top no-drag" onMouseDown={handleWindowResize("North")} />
+      <div className="window-resize-handle right no-drag" onMouseDown={handleWindowResize("East")} />
+      <div className="window-resize-handle bottom no-drag" onMouseDown={handleWindowResize("South")} />
+      <div className="window-resize-handle left no-drag" onMouseDown={handleWindowResize("West")} />
+      <div className="window-resize-handle top-left no-drag" onMouseDown={handleWindowResize("NorthWest")} />
+      <div className="window-resize-handle top-right no-drag" onMouseDown={handleWindowResize("NorthEast")} />
+      <div className="window-resize-handle bottom-left no-drag" onMouseDown={handleWindowResize("SouthWest")} />
+      <div className="window-resize-handle bottom-right no-drag" onMouseDown={handleWindowResize("SouthEast")} />
       {/* ── Left Sidebar running full window height from top to bottom ── */}
       <Sidebar
         ref={sidebarShellRef}
@@ -1583,7 +1681,7 @@ export default function App() {
                   onClick={() => activePanel && toggleMute(activePanel)}
                   title={activePanel && mutedPanels.has(activePanel) ? "Unmute" : "Mute"}
                 >
-                  {activePanel && mutedPanels.has(activePanel) ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                  {activePanel && mutedPanels.has(activePanel) ? <VolumeX size={15} /> : <Volume2 size={15} />}
                 </button>
               )}
               <button
@@ -1591,10 +1689,10 @@ export default function App() {
                 onClick={() => setIsPanelPinned(!isPanelPinned)}
                 title={isPanelPinned ? "Unpin panel (closes when clicking outside)" : "Pin panel"}
               >
-                <Pin size={13} />
+                <Pin size={15} />
               </button>
               <button className="panel-ctrl-btn" onClick={() => setActivePanel(null)} title="Close panel">
-                <X size={13} />
+                <X size={15} />
               </button>
             </div>
           </div>
@@ -1710,7 +1808,7 @@ export default function App() {
                       aria-label="Back"
                       title="Back"
                     >
-                      <ChevronLeft size={15} strokeWidth={2} />
+                      <ChevronLeft size={17} strokeWidth={2} />
                     </button>
                     <div className="nav-divider" />
                     <button
@@ -1728,7 +1826,7 @@ export default function App() {
                       aria-label="Forward"
                       title="Forward"
                     >
-                      <ChevronRight size={15} strokeWidth={2} />
+                      <ChevronRight size={17} strokeWidth={2} />
                     </button>
                     <button
                       className="nav-btn"
@@ -1743,7 +1841,7 @@ export default function App() {
                       aria-label="Share / Copy Link"
                       title="Share link"
                     >
-                      <Upload size={13} strokeWidth={2} />
+                      <Upload size={15} strokeWidth={2} />
                     </button>
                     <button
                       className="nav-btn"
@@ -1758,7 +1856,7 @@ export default function App() {
                       aria-label="Reload"
                       title="Reload"
                     >
-                      <RotateCw size={13} strokeWidth={2} className={isLoading ? "tab-loading-spin" : ""} />
+                      <RotateCw size={15} strokeWidth={2} className={isLoading ? "tab-loading-spin" : ""} />
                     </button>
                   </div>
 
@@ -1814,7 +1912,7 @@ export default function App() {
                       aria-label="Back"
                       title="Back"
                     >
-                      <ChevronLeft size={15} strokeWidth={2} />
+                      <ChevronLeft size={17} strokeWidth={2} />
                     </button>
                     <div className="nav-divider" />
                     <button
@@ -1832,7 +1930,7 @@ export default function App() {
                       aria-label="Forward"
                       title="Forward"
                     >
-                      <ChevronRight size={15} strokeWidth={2} />
+                      <ChevronRight size={17} strokeWidth={2} />
                     </button>
                     <button
                       className="nav-btn"
@@ -1847,7 +1945,7 @@ export default function App() {
                       aria-label="Share / Copy Link"
                       title="Share link"
                     >
-                      <Upload size={13} strokeWidth={2} />
+                      <Upload size={15} strokeWidth={2} />
                     </button>
                     <button
                       className="nav-btn"
@@ -1862,7 +1960,7 @@ export default function App() {
                       aria-label="Reload"
                       title="Reload"
                     >
-                      <RotateCw size={13} strokeWidth={2} className={isLoading ? "tab-loading-spin" : ""} />
+                      <RotateCw size={15} strokeWidth={2} className={isLoading ? "tab-loading-spin" : ""} />
                     </button>
                   </div>
 
@@ -1897,11 +1995,11 @@ export default function App() {
               <>
                 <div className="nav-cluster no-drag">
                   <button className="nav-btn" onClick={goBack} disabled={!canGoBack} aria-label="Back" title="Back">
-                    <ChevronLeft size={15} strokeWidth={2} />
+                    <ChevronLeft size={17} strokeWidth={2} />
                   </button>
                   <div className="nav-divider" />
                   <button className="nav-btn" onClick={goForward} disabled={!canGoForward} aria-label="Forward" title="Forward">
-                    <ChevronRight size={15} strokeWidth={2} />
+                    <ChevronRight size={17} strokeWidth={2} />
                   </button>
                   <button
                     className="nav-btn"
@@ -1916,10 +2014,10 @@ export default function App() {
                     aria-label="Share / Copy Link"
                     title="Share link"
                   >
-                    <Upload size={13} strokeWidth={2} />
+                    <Upload size={15} strokeWidth={2} />
                   </button>
                   <button className="nav-btn" onClick={reloadActive} disabled={activeTab.kind !== "web"} aria-label="Reload" title="Reload">
-                    <RotateCw size={13} strokeWidth={2} className={isReloading ? "tab-loading-spin" : ""} />
+                    <RotateCw size={15} strokeWidth={2} className={isReloading ? "tab-loading-spin" : ""} />
                   </button>
                 </div>
 

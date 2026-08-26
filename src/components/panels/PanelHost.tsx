@@ -5,6 +5,7 @@ import { HistoryPanel } from "./HistoryPanel";
 import { DownloadsPanel } from "./DownloadsPanel";
 import { SettingsPanel } from "./SettingsPanel";
 import { NotesPanel } from "./NotesPanel";
+import { TerminalPanel } from "./TerminalPanel";
 
 interface PanelHostProps {
   activePanel: PanelId;
@@ -86,6 +87,8 @@ export function PanelContent(props: PanelHostProps) {
       );
     case "notes":
       return <NotesPanel />;
+    case "terminal":
+      return <TerminalPanel />;
     default:
       return <div className="panel-empty">No panel selected</div>;
   }

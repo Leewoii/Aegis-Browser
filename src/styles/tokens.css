@@ -19,10 +19,10 @@
   --radius-lg: 18px;
   --radius-window: 22px;
   --tab-radius: 11px;
-  --chrome-height: 44px;
-  --subbar-height: 36px;
-  --sidebar-collapsed-width: 52px;
-  --sidebar-expanded-width: 240px;
+  --chrome-height: 48px;
+  --subbar-height: 40px;
+  --sidebar-collapsed-width: 56px;
+  --sidebar-expanded-width: 260px;
 
   /* Motion */
   --ease-out: cubic-bezier(0.2, 0.9, 0.3, 1);

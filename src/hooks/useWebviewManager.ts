@@ -175,10 +175,11 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     }
 
     // Round outward to prevent sub-pixel bleeding
+    const RESIZE_INSET_PANEL = 4;
     const pLeft = Math.ceil(rawRect.left);
     const pTop = Math.ceil(rawRect.top);
-    const pWidth = Math.floor(rawRect.right) - pLeft;
-    const pHeight = Math.floor(rawRect.bottom) - pTop;
+    const pWidth = Math.max(0, Math.floor(rawRect.right) - pLeft - RESIZE_INSET_PANEL);
+    const pHeight = Math.max(0, Math.floor(rawRect.bottom) - pTop - RESIZE_INSET_PANEL);
     if (pWidth <= 0 || pHeight <= 0) return;
 
     const label = `Aegis-panel-${active}`;
@@ -265,10 +266,11 @@ export function useWebviewManager(options: WebviewManagerOptions) {
 
         const syncPane = async (paneTab: Tab, rect: DOMRect) => {
           if (rect.width <= 0 || rect.height <= 0) return;
+          const RESIZE_INSET_SPLIT = 4;
           const l = Math.ceil(rect.left);
           const t = Math.ceil(rect.top);
-          const w = Math.floor(rect.right) - l;
-          const h = Math.floor(rect.bottom) - t;
+          const w = Math.max(0, Math.floor(rect.right) - l - RESIZE_INSET_SPLIT);
+          const h = Math.max(0, Math.floor(rect.bottom) - t - RESIZE_INSET_SPLIT);
           if (w <= 0 || h <= 0) return;
 
           const wv = tabWebviewsRef.current[paneTab.id];
@@ -306,10 +308,13 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       }
 
       // Round outward to prevent sub-pixel bleeding over sidebar/chrome borders
+      // Inset 4px from window's right/bottom edges so HTML resize handles remain hit-testable
+      // (native webview would otherwise cover them, making bottom/right resizing impossible)
+      const RESIZE_INSET = 4;
       const left = Math.ceil(rect.left);
       const top = Math.ceil(rect.top);
-      const width = Math.floor(rect.right) - left;
-      const height = Math.floor(rect.bottom) - top;
+      const width = Math.max(0, Math.floor(rect.right) - left - RESIZE_INSET);
+      const height = Math.max(0, Math.floor(rect.bottom) - top - RESIZE_INSET);
 
       if (width <= 0 || height <= 0) {
         await syncPanelWebview();

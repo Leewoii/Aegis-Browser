@@ -152,6 +152,14 @@ class DevConsoleManager {
     console.error = (...args: unknown[]) => {
       originalConsoleError.apply(console, args);
       try {
+        // Ignore xterm.js DEL parsing noise — Powershell on Windows emits 0x7F which xterm logs as "Parsing error: code 127"
+        const firstArgStr = typeof args[0] === "string" ? args[0] : "";
+        if (firstArgStr.includes("xterm.js: Parsing error") || firstArgStr.includes("Parsing error:")) {
+          const combined = args.join(" ");
+          if (combined.includes('"code":127') || combined.includes("code 127") || combined.includes("\\x7f") || combined.includes("\x7f")) {
+            return;
+          }
+        }
         const firstArg = args[0];
         const title =
           typeof firstArg === "string"
