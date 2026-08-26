@@ -1,4 +1,5 @@
-import { forwardRef, useState } from "react";
+import { forwardRef, useState, useEffect } from "react";
+import { devConsole } from "../services/devConsole";
 import {
   Bookmark,
   Briefcase,
@@ -40,6 +41,8 @@ interface SidebarProps {
   onAddWorkspace: () => void;
   workspaceTabCounts: Record<string, number>;
   onHomeClick: () => void;
+  onConsoleClick: () => void;
+  isConsoleOpen: boolean;
   onUpdatesClick: () => void;
   isUpdatesOpen: boolean;
   isHovered?: boolean;
@@ -59,6 +62,8 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
     onAddWorkspace,
     workspaceTabCounts,
     onHomeClick,
+    onConsoleClick,
+    isConsoleOpen,
     onUpdatesClick,
     isUpdatesOpen,
     isHovered: isHoveredProp,
@@ -68,6 +73,14 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
   ref,
 ) {
   const [internalIsHovered, setInternalIsHovered] = useState(false);
+  const [errorCount, setErrorCount] = useState(() => devConsole.getStats().errors);
+
+  useEffect(() => {
+    return devConsole.subscribeStats((stats) => {
+      setErrorCount(stats.errors);
+    });
+  }, []);
+
   const isHovered = isHoveredProp !== undefined ? isHoveredProp : internalIsHovered;
 
   const expanded = isPinned || isHovered;
@@ -322,8 +335,35 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
 
         <div className="sidebar-spacer" />
 
-        {/* Bottom actions: Settings & Pin */}
+        {/* Bottom actions: Dev Console, Updates, Settings & Pin */}
         <div className="sidebar-footer">
+          <button
+            className={`sidebar-item ${isConsoleOpen ? "active" : ""}`}
+            onClick={onConsoleClick}
+            title="Developer & Debugging Console"
+          >
+            <span className="sidebar-icon">
+              <Terminal size={15} strokeWidth={1.8} />
+              {!expanded && errorCount > 0 && (
+                <span
+                  className="sidebar-badge error icon-corner"
+                  title={`${errorCount} runtime errors detected`}
+                >
+                  {errorCount > 99 ? "99+" : errorCount}
+                </span>
+              )}
+            </span>
+            {expanded && <span className="sidebar-label">Dev Console</span>}
+            {expanded && errorCount > 0 && (
+              <span
+                className="sidebar-badge error"
+                title={`${errorCount} runtime errors detected`}
+              >
+                {errorCount > 99 ? "99+" : errorCount}
+              </span>
+            )}
+          </button>
+
           <button
             className={`sidebar-item ${isUpdatesOpen ? "active" : ""}`}
             onClick={onUpdatesClick}

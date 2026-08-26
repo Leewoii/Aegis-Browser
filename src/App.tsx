@@ -33,6 +33,7 @@ import {
   defaultTabs,
   makeHomeTab,
   makeUpdatesTab,
+  makeConsoleTab,
   makeWebTab,
   normalizeInput,
   titleFromUrl,
@@ -72,6 +73,8 @@ import { ChromeActions } from "./components/ChromeActions";
 import { Omnibox, useSuggestions } from "./components/Omnibox";
 import { HomeScreen } from "./components/HomeScreen";
 import { UpdatesScreen } from "./components/UpdatesScreen";
+import { DevConsoleScreen } from "./components/DevConsoleScreen";
+import { devConsole } from "./services/devConsole";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toasts";
 import { PanelContent } from "./components/panels/PanelHost";
@@ -329,6 +332,14 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      devConsole.initGlobalInterceptors();
+      devConsole.persistence({
+        entity: "session",
+        state: "persisting",
+        stage: "reload_refetch",
+        action: "APP_STARTUP_LOAD",
+        description: "Initializing SQLite storage and loading user profile...",
+      });
       await initializeStorage();
       if (cancelled) return;
       const [
@@ -355,6 +366,20 @@ export default function App() {
         loadWindowState(),
       ]);
       if (cancelled) return;
+
+      devConsole.persistence({
+        entity: "session",
+        state: "db_committed",
+        stage: "persisted_data",
+        action: "APP_STARTUP_LOAD",
+        description: `Successfully loaded ${tabsData.tabs.length} tabs, ${workspacesData.length} workspaces, ${bookmarksData.length} bookmarks from SQLite.`,
+        details: {
+          tabsCount: tabsData.tabs.length,
+          workspacesCount: workspacesData.length,
+          bookmarksCount: bookmarksData.length,
+          activeWorkspace: wsIdData,
+        },
+      });
       setSettings(settingsData);
       const startBehavior = settingsData.startupBehavior || "previous";
       if (startBehavior === "home") {
@@ -796,6 +821,19 @@ export default function App() {
       return;
     }
     const tab = makeUpdatesTab(activeWorkspaceId);
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  }
+
+  function openDevConsoleTab() {
+    if (!isSidebarPinned) setIsSidebarHovered(false);
+    if (!isPanelPinned) setActivePanel(null);
+    const existing = tabs.find((tab) => tab.kind === "console" && tab.workspaceId === activeWorkspaceId);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const tab = makeConsoleTab(activeWorkspaceId);
     setTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
   }
@@ -1243,6 +1281,7 @@ export default function App() {
 
   const contentIsHome = activeTab.kind === "home";
   const contentIsUpdates = activeTab.kind === "updates";
+  const contentIsConsole = activeTab.kind === "console";
   const canGoBack = activeTab.kind === "web" && activeTab.index > 0;
   const canGoForward = activeTab.kind === "web" && activeTab.index < activeTab.history.length - 1;
   const panelIsWebApp = activePanel !== null && isWebAppPanel(activePanel);
@@ -1267,6 +1306,8 @@ export default function App() {
         onAddWorkspace={() => setIsCreateWorkspaceOpen(true)}
         workspaceTabCounts={workspaceTabCounts}
         onHomeClick={createHomeTab}
+        onConsoleClick={openDevConsoleTab}
+        isConsoleOpen={contentIsConsole}
         onUpdatesClick={openUpdatesTab}
         isUpdatesOpen={contentIsUpdates}
         isHovered={isSidebarHovered}
@@ -1430,7 +1471,7 @@ export default function App() {
               </button>
             </div>
 
-            {!contentIsHome && !contentIsUpdates && (
+            {!contentIsHome && !contentIsUpdates && !contentIsConsole && (
               <Omnibox
                 url={activeTab.url}
                 query={query}
@@ -1482,9 +1523,16 @@ export default function App() {
             ) : null}
 
             {contentIsUpdates && <UpdatesScreen />}
+            {contentIsConsole && <DevConsoleScreen />}
 
-            {!contentIsHome && !contentIsUpdates && <div className={`loading-bar ${isLoading ? "loading" : ""}`} />}
-            <div className={`webview-holder ${contentIsHome || contentIsUpdates ? "hidden" : ""}`} />
+            {!contentIsHome && !contentIsUpdates && !contentIsConsole && (
+              <div className={`loading-bar ${isLoading ? "loading" : ""}`} />
+            )}
+            <div
+              className={`webview-holder ${
+                contentIsHome || contentIsUpdates || contentIsConsole ? "hidden" : ""
+              }`}
+            />
           </main>
         </div>
       </div>

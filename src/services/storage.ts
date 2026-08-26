@@ -29,6 +29,7 @@ import {
   HOME_TAB_ID,
 } from "../utils/browser";
 import { debugLog } from "./debug";
+import { devConsole } from "./devConsole";
 
 type SqliteDatabase = Awaited<ReturnType<typeof Database.load>>;
 
@@ -55,10 +56,36 @@ function getWriteQueueState(): GlobalStorageState {
 export async function getDb(): Promise<SqliteDatabase> {
   if (db) return db;
   if (!initPromise) {
-    initPromise = Database.load("sqlite:Aegis.db").then((database) => {
-      db = database;
-      return database;
+    devConsole.setDbStatus("connecting");
+    devConsole.db({
+      operation: "CONNECT",
+      tableOrQuery: "sqlite:Aegis.db",
+      status: "success",
+      details: { db: "Aegis.db" },
     });
+    initPromise = Database.load("sqlite:Aegis.db")
+      .then((database) => {
+        db = database;
+        devConsole.setDbStatus("connected");
+        devConsole.db({
+          operation: "CONNECTED",
+          tableOrQuery: "sqlite:Aegis.db",
+          status: "success",
+          details: { status: "ready" },
+        });
+        return database;
+      })
+      .catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        devConsole.setDbStatus("error", msg);
+        devConsole.db({
+          operation: "CONNECT",
+          tableOrQuery: "sqlite:Aegis.db",
+          status: "error",
+          error: error as Error,
+        });
+        throw error;
+      });
   }
   return initPromise;
 }
@@ -1167,3 +1194,113 @@ export async function deleteSecureSecret(key: string): Promise<void> {
     // #endregion DEBUG
   });
 }
+
+// ---------------------------------------------------------------------------
+// Storage Diagnostics
+// ---------------------------------------------------------------------------
+
+export type StorageDiagnosticsResult = {
+  dbStatus: "connected" | "error";
+  error?: string;
+  latencyMs: number;
+  tables: Record<string, number>;
+  encryptionWorking: boolean;
+};
+
+export async function runStorageDiagnostics(): Promise<StorageDiagnosticsResult> {
+  const start = performance.now();
+  try {
+    const database = await getDb();
+
+    // 1. Table row counts
+    const tableNames = [
+      "workspaces",
+      "tab_groups",
+      "tabs_v2",
+      "sidebar_state",
+      "session_state",
+      "bookmarks",
+      "history",
+      "downloads_v2",
+      "secure_vault",
+      "closed_tabs",
+    ];
+    const tables: Record<string, number> = {};
+    for (const table of tableNames) {
+      try {
+        const rows = await database.select<[{ count: number }]>(
+          `SELECT COUNT(*) as count FROM ${table}`,
+        );
+        tables[table] = rows[0]?.count ?? 0;
+      } catch {
+        tables[table] = -1;
+      }
+    }
+
+    // 2. Round-trip test
+    const testKey = `__diag_${Date.now()}`;
+    await database.execute(
+      "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ($1, $2, $3)",
+      [testKey, "diagnostic_ok", Date.now()],
+    );
+    const readBack = await database.select<Array<{ value: string }>>(
+      "SELECT value FROM session_state WHERE key = $1",
+      [testKey],
+    );
+    await database.execute("DELETE FROM session_state WHERE key = $1", [testKey]);
+
+    const readSuccess = readBack.length > 0 && readBack[0].value === "diagnostic_ok";
+
+    // 3. Vault DPAPI test
+    let encryptionWorking = true;
+    try {
+      await storeSecureSecret("__diag_vault__", "vault_test_payload");
+      const decrypted = await retrieveSecureSecret("__diag_vault__");
+      await deleteSecureSecret("__diag_vault__");
+      encryptionWorking = decrypted === "vault_test_payload";
+    } catch {
+      encryptionWorking = false;
+    }
+
+    const duration = Math.round((performance.now() - start) * 10) / 10;
+
+    devConsole.persistence({
+      entity: "system",
+      state: readSuccess ? "db_committed" : "db_failed",
+      stage: "database",
+      action: "DIAGNOSTIC_CHECK",
+      description: `Storage diagnostics completed in ${duration}ms. Read-write verify: ${
+        readSuccess ? "PASS" : "FAIL"
+      }. DPAPI Vault: ${encryptionWorking ? "PASS" : "FAIL"}.`,
+      durationMs: duration,
+      details: { tables, readSuccess, encryptionWorking },
+    });
+
+    return {
+      dbStatus: "connected",
+      latencyMs: duration,
+      tables,
+      encryptionWorking,
+    };
+  } catch (err) {
+    const duration = Math.round((performance.now() - start) * 10) / 10;
+    const msg = err instanceof Error ? err.message : String(err);
+    devConsole.persistence({
+      entity: "system",
+      state: "db_failed",
+      stage: "database",
+      action: "DIAGNOSTIC_CHECK",
+      description: `Storage diagnostics failed after ${duration}ms: ${msg}`,
+      durationMs: duration,
+      error: err as Error,
+    });
+    return {
+      dbStatus: "error",
+      error: msg,
+      latencyMs: duration,
+      tables: {},
+      encryptionWorking: false,
+    };
+  }
+}
+

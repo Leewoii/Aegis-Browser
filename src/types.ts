@@ -1,6 +1,6 @@
 import { WEB_APP_PANELS } from "./constants/webApps";
 
-export type TabKind = "home" | "web" | "updates";
+export type TabKind = "home" | "web" | "updates" | "console";
 
 export type Tab = {
   id: string;

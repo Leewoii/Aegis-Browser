@@ -111,6 +111,20 @@ export function makeUpdatesTab(workspaceId = "personal"): Tab {
   };
 }
 
+export function makeConsoleTab(workspaceId = "personal"): Tab {
+  const id = `console-${uid()}`;
+  return {
+    id,
+    kind: "console",
+    title: "Dev Console",
+    url: "",
+    label: `Aegis-console-${id}`,
+    history: [],
+    index: -1,
+    workspaceId,
+  };
+}
+
 export function makeWebTab(url: string, title?: string, group?: string, workspaceId = "personal"): Tab {
   const id = uid();
   return {

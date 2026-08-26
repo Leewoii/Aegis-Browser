@@ -1,4 +1,4 @@
-import { Globe, Youtube, Mail, FileText, Circle, RefreshCw } from "lucide-react";
+import { Globe, Youtube, Mail, FileText, Circle, RefreshCw, Terminal } from "lucide-react";
 import type { Tab } from "../types";
 
 export function Favicon({ tab }: { tab: Tab }) {
@@ -7,6 +7,9 @@ export function Favicon({ tab }: { tab: Tab }) {
   }
   if (tab.kind === "updates") {
     return <RefreshCw size={14} className="tab-favicon generic" />;
+  }
+  if (tab.kind === "console") {
+    return <Terminal size={14} className="tab-favicon generic" />;
   }
   const url = tab.url.toLowerCase();
   if (url.includes("youtube.com") || url.includes("youtu.be")) {
