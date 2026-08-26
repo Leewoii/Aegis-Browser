@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Aegis Browser",
-  "version": "2.0.0",
-  "identifier": "com.silentx.browser.v2",
+  "version": "1.0.0",
+  "identifier": "com.aegis.browser",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://127.0.0.1:5173",
