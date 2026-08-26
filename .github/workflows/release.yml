@@ -7,6 +7,11 @@ on:
         description: "Version to release (e.g. 1.3.0 or v1.3.0)"
         required: true
         type: string
+      notes:
+        description: "Release notes / description (markdown supported)"
+        required: true
+        type: string
+        default: "See the release notes below for changes in this version."
 
 permissions:
   contents: write
@@ -88,6 +93,8 @@ jobs:
         run: npm run tauri -- build --bundles nsis
 
       - name: Rename artifacts to Aegis.Browser_vX.X.X_x64-setup.exe and patch latest.json
+        env:
+          RELEASE_NOTES: ${{ inputs.notes }}
         shell: pwsh
         run: |
           $ver = "${{ steps.version.outputs.version }}"
@@ -133,9 +140,16 @@ jobs:
           $repo = "${{ github.repository }}"
           $url = "https://github.com/$repo/releases/download/$tag/$newBase"
 
+          $notes = $env:RELEASE_NOTES
+          if ($null -eq $notes) { $notes = "" }
+          $notes = $notes.Trim()
+          if (-not $notes) { $notes = "See the release notes below for changes in this version." }
+          # Persist for release body (avoids YAML escaping issues with multiline notes)
+          $notes | Set-Content "RELEASE_NOTES.md" -Encoding utf8
+
           $latest = [ordered]@{
             version = $ver
-            notes = "See the release notes below for changes in this version."
+            notes = $notes
             pub_date = $pubDate
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
@@ -165,7 +179,7 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Aegis Browser ${{ steps.version.outputs.tag }}
-          body: "See the release notes below for changes in this version."
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           files: |
