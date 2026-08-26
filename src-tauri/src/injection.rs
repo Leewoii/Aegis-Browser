@@ -1,12 +1,20 @@
-/// JavaScript injected into child webviews (tabs and panels) on page load.
+﻿/// JavaScript injected into child webviews (tabs and panels) on page load.
 ///
 /// Intercepts `target="_blank"` links, `window.open()` calls and blank-target
 /// form submissions. Instead of spawning a new window, the webview navigates
 /// to the URL; `on_navigation` then catches it and the main window opens a new
-/// tab (the navigation itself is denied). This avoids relying on the
-/// unreliable `__TAURI__` IPC bridge inside third-party pages.
+/// tab (the navigation itself is denied).
 const INTERCEPTION_SCRIPT: &str = r#"
 (function(){
+  // Never inject into sandboxed iframes or about:blank frames
+  try {
+    if (window !== window.top || !window.location || !window.location.href || window.location.href.startsWith('about:')) {
+      return;
+    }
+  } catch(_) {
+    return;
+  }
+
   if (window.__sxIntercepted) return;
   window.__sxIntercepted = true;
 
@@ -179,23 +187,15 @@ const INTERCEPTION_SCRIPT: &str = r#"
       return item;
     }
 
-    function createSeparator() {
-      var sep = document.createElement('div');
-      sep.style.cssText = 'height: 1px; background: #232736; margin: 4px 0;';
-      return sep;
-    }
-
-    menu.appendChild(createItem('Open link in new tab', 'Ctrl+Click', function() {
+    menu.appendChild(createItem('Open Link in New Tab', 'Ctrl+Click', function() {
       sxOpenNewTab(fullUrl);
     }));
 
-    menu.appendChild(createItem('Open link in current tab', '', function() {
-      window.location.href = fullUrl;
-    }));
+    var sep = document.createElement('div');
+    sep.style.cssText = 'height: 1px; background: #1e2235; margin: 4px 0;';
+    menu.appendChild(sep);
 
-    menu.appendChild(createSeparator());
-
-    menu.appendChild(createItem('Copy link address', '', function() {
+    menu.appendChild(createItem('Copy Link Address', '', function() {
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(fullUrl);
@@ -238,35 +238,6 @@ const INTERCEPTION_SCRIPT: &str = r#"
   window.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') removeContextMenu();
   }, true);
-
-  // 5. Activity notification to parent window (click/pointerdown in webview)
-  var sxLastNotify = 0;
-  function sxNotifyActivity() {
-    var now = Date.now();
-    if (now - sxLastNotify < 150) return;
-    sxLastNotify = now;
-
-    // Top-frame anchor click triggers on_navigation in Tauri
-    try {
-      var a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = 'sx-internal://user-click?' + now;
-      (document.body || document.documentElement).appendChild(a);
-      a.click();
-      setTimeout(function() {
-        if (a && a.parentNode) a.parentNode.removeChild(a);
-      }, 50);
-    } catch(_) {}
-  }
-
-  window.addEventListener('pointerdown', sxNotifyActivity, true);
-  window.addEventListener('mousedown', sxNotifyActivity, true);
-  window.addEventListener('click', sxNotifyActivity, true);
-  window.addEventListener('touchstart', sxNotifyActivity, true);
-  document.addEventListener('pointerdown', sxNotifyActivity, true);
-  document.addEventListener('mousedown', sxNotifyActivity, true);
-  document.addEventListener('click', sxNotifyActivity, true);
-  document.addEventListener('touchstart', sxNotifyActivity, true);
 })();
 "#;
 

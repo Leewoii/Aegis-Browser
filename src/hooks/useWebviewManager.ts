@@ -11,10 +11,19 @@ import { debugLog } from "../services/debug";
 
 const RESIZE_RAF_DEBOUNCE = 0;
 
+export type SplitActiveTabs = {
+  left: Tab;
+  right: Tab;
+  ratio: number;
+} | null;
+
 interface WebviewManagerOptions {
   contentRef: React.RefObject<HTMLDivElement | null>;
+  splitLeftRef?: React.RefObject<HTMLDivElement | null>;
+  splitRightRef?: React.RefObject<HTMLDivElement | null>;
   panelContentRef: React.RefObject<HTMLDivElement | null>;
   getActiveTab: () => Tab | null;
+  getSplitTabs?: () => SplitActiveTabs;
   activePanelRef: React.MutableRefObject<PanelId | null>;
   isOverlayActiveRef?: React.MutableRefObject<boolean>;
   showToast: (message: string, type?: ToastType) => void;
@@ -50,8 +59,11 @@ async function waitForWebviewCreated(view: Webview, retries = 3): Promise<void> 
 export function useWebviewManager(options: WebviewManagerOptions) {
   const {
     contentRef,
+    splitLeftRef,
+    splitRightRef,
     panelContentRef,
     getActiveTab,
+    getSplitTabs,
     activePanelRef,
     isOverlayActiveRef,
     showToast,
@@ -208,16 +220,25 @@ export function useWebviewManager(options: WebviewManagerOptions) {
 
     const run = async () => {
       const tab = getActiveTab();
+      const splitTabs = getSplitTabs?.() ?? null;
+
       // #region DEBUG
       await debugLog(
-        `[DEBUG H3] syncActive start tab=${tab?.id ?? "none"} kind=${tab?.kind ?? "none"} overlay=${Boolean(isOverlayActiveRef?.current)} tabViews=${Object.keys(tabWebviewsRef.current).length}`,
+        `[DEBUG H3] syncActive start tab=${tab?.id ?? "none"} kind=${tab?.kind ?? "none"} split=${splitTabs ? `${splitTabs.left.id}|${splitTabs.right.id}` : "none"} overlay=${Boolean(isOverlayActiveRef?.current)} tabViews=${Object.keys(tabWebviewsRef.current).length}`,
       );
       // #endregion DEBUG
 
-      // Hide ALL inactive tab webviews, not just the previous one.
-      // This prevents stale native HWNDs from bleeding through sidebar/panels.
+      const activeIds = new Set<string>();
+      if (splitTabs) {
+        activeIds.add(splitTabs.left.id);
+        activeIds.add(splitTabs.right.id);
+      } else if (tab) {
+        activeIds.add(tab.id);
+      }
+
+      // Hide ALL webviews that are not active in this frame
       for (const [id, wv] of Object.entries(tabWebviewsRef.current)) {
-        if (id !== tab?.id) {
+        if (!activeIds.has(id)) {
           try {
             await wv.hide();
           } catch {
@@ -226,6 +247,51 @@ export function useWebviewManager(options: WebviewManagerOptions) {
         }
       }
 
+      if (isOverlayActiveRef?.current) {
+        for (const id of activeIds) {
+          const wv = tabWebviewsRef.current[id];
+          if (wv) {
+            try { await wv.hide(); } catch { /* ignore */ }
+          }
+        }
+        await syncPanelWebview();
+        return;
+      }
+
+      // ── Split screen mode ─────────────────────────────────────────
+      if (splitTabs && splitLeftRef?.current && splitRightRef?.current) {
+        const leftRect  = splitLeftRef.current.getBoundingClientRect();
+        const rightRect = splitRightRef.current.getBoundingClientRect();
+
+        const syncPane = async (paneTab: Tab, rect: DOMRect) => {
+          if (rect.width <= 0 || rect.height <= 0) return;
+          const l = Math.ceil(rect.left);
+          const t = Math.ceil(rect.top);
+          const w = Math.floor(rect.right) - l;
+          const h = Math.floor(rect.bottom) - t;
+          if (w <= 0 || h <= 0) return;
+
+          const wv = tabWebviewsRef.current[paneTab.id];
+          if (!wv) {
+            await createTabWebview(paneTab, l, t, w, h);
+          } else {
+            try {
+              await wv.setPosition(new LogicalPosition(l, t));
+              await wv.setSize(new LogicalSize(w, h));
+              await wv.show();
+            } catch (err) {
+              console.error("Failed to reposition split webview:", err);
+            }
+          }
+        };
+
+        await syncPane(splitTabs.left,  leftRect);
+        await syncPane(splitTabs.right, rightRect);
+        await syncPanelWebview();
+        return;
+      }
+
+      // ── Single tab mode ───────────────────────────────────────────
       const container = contentRef.current;
       if (!tab || tab.kind !== "web" || !container) {
         await syncPanelWebview();
@@ -233,19 +299,6 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       }
 
       const existingWv = tabWebviewsRef.current[tab.id];
-
-      if (isOverlayActiveRef?.current) {
-        if (existingWv) {
-          try {
-            await existingWv.hide();
-          } catch {
-            // ignore already hidden
-          }
-        }
-        await syncPanelWebview();
-        return;
-      }
-
       const rect = container.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         await syncPanelWebview();
@@ -286,7 +339,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       syncQueuedRef.current = false;
       await syncActive();
     }
-  }, [contentRef, panelContentRef, activePanelRef, isOverlayActiveRef]);
+  }, [contentRef, splitLeftRef, splitRightRef, panelContentRef, activePanelRef, isOverlayActiveRef]);
 
   const scheduleSyncActive = useCallback(() => {
     if (pendingRafRef.current !== null && pendingRafRef.current !== RESIZE_RAF_DEBOUNCE) {

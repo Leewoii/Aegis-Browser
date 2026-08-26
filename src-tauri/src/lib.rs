@@ -7,6 +7,15 @@ use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  #[cfg(target_os = "windows")]
+  {
+    // Enable Widevine DRM, MediaFoundation hardware decoding, and autoplay for video streaming (Netflix, Crunchyroll, etc.)
+    std::env::set_var(
+      "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+      "--enable-features=WidevineCdm,MediaFoundationPlayback,HardwareMediaKeyHandling,EncryptedMedia --autoplay-policy=no-user-gesture-required --disable-features=TrackingPrevention",
+    );
+  }
+
   let navigation_state = Arc::new(Mutex::new(navigation::NavigationMap::default()));
 
   tauri::Builder::default()

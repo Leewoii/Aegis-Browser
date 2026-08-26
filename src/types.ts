@@ -2,6 +2,13 @@ import { WEB_APP_PANELS } from "./constants/webApps";
 
 export type TabKind = "home" | "web" | "updates" | "console";
 
+export type SplitViewState = {
+  leftTabId: string;
+  rightTabId: string;
+  ratio: number; // between 0.2 and 0.8, default 0.5 (50/50 split)
+  activeSide: "left" | "right";
+};
+
 export type Tab = {
   id: string;
   kind: TabKind;

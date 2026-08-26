@@ -80,6 +80,11 @@ import { Toasts } from "./components/Toasts";
 import { PanelContent } from "./components/panels/PanelHost";
 import { CreateWorkspaceModal } from "./components/CreateWorkspaceModal";
 import type { ContextMenuData } from "./components/ContextMenu";
+import { SplitViewport } from "./components/SplitViewport";
+import { SplitDropOverlay } from "./components/SplitDropOverlay";
+import type { SplitSide } from "./components/SplitDropOverlay";
+import type { SplitViewState } from "./types";
+import type { SplitActiveTabs } from "./hooks/useWebviewManager";
 
 import { useToasts } from "./hooks/useToasts";
 import { useVoiceSearch } from "./hooks/useVoiceSearch";
@@ -102,6 +107,21 @@ export default function App() {
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isReloading, setIsReloading] = useState(false);
+  const tabHistoryRef = useRef<string[]>([HOME_TAB_ID]);
+
+  useEffect(() => {
+    tabHistoryRef.current = [activeTabId, ...tabHistoryRef.current.filter((id) => id !== activeTabId)].slice(0, 50);
+  }, [activeTabId]);
+
+  // ── Split screen state ────────────────────────────────────────────
+  const [splitState, setSplitState] = useState<SplitViewState | null>(null);
+  const [splitDragSide, setSplitDragSide] = useState<SplitSide>(null);
+  const splitStateRef = useRef<SplitViewState | null>(null);
+  const splitLeftRef  = useRef<HTMLDivElement | null>(null);
+  const splitRightRef = useRef<HTMLDivElement | null>(null);
+  /** Updated every render so the webview manager closure always reads the latest */
+  splitStateRef.current = splitState;
 
   // ── Sidebar & Side panel state ────────────────────────────────────
   const [isSidebarPinned, setIsSidebarPinned] = useState(false);
@@ -321,8 +341,22 @@ export default function App() {
     hideActiveWebview,
   } = useWebviewManager({
     contentRef,
+    splitLeftRef,
+    splitRightRef,
     panelContentRef,
     getActiveTab: () => activeTabRef.current,
+    getSplitTabs: (): SplitActiveTabs => {
+      const s = splitStateRef.current;
+      if (!s) return null;
+      const curId = activeTabRef.current?.id;
+      if (curId !== s.leftTabId && curId !== s.rightTabId) {
+        return null;
+      }
+      const leftTab  = tabsRef.current.find((t) => t.id === s.leftTabId)  ?? null;
+      const rightTab = tabsRef.current.find((t) => t.id === s.rightTabId) ?? null;
+      if (!leftTab || !rightTab) return null;
+      return { left: leftTab, right: rightTab, ratio: s.ratio };
+    },
     activePanelRef,
     isOverlayActiveRef,
     showToast,
@@ -796,11 +830,19 @@ export default function App() {
   function reloadActive() {
     const tab = activeTab;
     if (tab.kind !== "web") return;
+    setIsReloading(true);
+    setIsLoading(true);
     void invoke("allow_navigation", { label: tab.label, url: tab.url })
       .then(() => invoke("navigate_webview", { label: tab.label, url: tab.url }))
       .catch(() => {
         showToast("Reload failed, recreating view", "error");
         void recreateTabWebview(tab);
+      })
+      .finally(() => {
+        setTimeout(() => {
+          setIsReloading(false);
+          setIsLoading(false);
+        }, 750);
       });
   }
 
@@ -849,10 +891,33 @@ export default function App() {
     });
     if (activeTabId === id) {
       const remainingVisible = visibleTabs.filter((tab) => tab.id !== id);
-      const nextTab = remainingVisible[0] ?? makeHomeTab(activeWorkspaceId);
-      setActiveTabId(nextTab.id);
+      // 1. Check MRU activation history for the previous active tab
+      const prevActiveId = tabHistoryRef.current.find(
+        (histId) => histId !== id && remainingVisible.some((t) => t.id === histId),
+      );
+      if (prevActiveId) {
+        setActiveTabId(prevActiveId);
+      } else {
+        // 2. Fallback: adjacent tab (left neighbor, or right neighbor)
+        const closedIndex = visibleTabs.findIndex((t) => t.id === id);
+        const adjacentTab =
+          (closedIndex > 0 ? visibleTabs[closedIndex - 1] : visibleTabs[closedIndex + 1]) ??
+          remainingVisible[0] ??
+          makeHomeTab(activeWorkspaceId);
+        setActiveTabId(adjacentTab.id);
+      }
+      tabHistoryRef.current = tabHistoryRef.current.filter((histId) => histId !== id);
     }
     void destroyTabWebview(id);
+
+    // If the closed tab was part of a split pair, dissolve the split
+    setSplitState((prev) => {
+      if (!prev) return null;
+      if (prev.leftTabId === id || prev.rightTabId === id) {
+        return null; // dissolve split — the surviving tab returns to normal view
+      }
+      return prev;
+    });
 
     // Auto-dissolve group if only 1 tab remains
     if (targetTab?.group) {
@@ -1022,11 +1087,78 @@ export default function App() {
     }
   }
 
+  // ── Split screen handlers ─────────────────────────────────────────
+
+  /** Called when a tab chip is dropped onto the left/right drop zone */
+  const handleTabDropOnSplit = useCallback((tabId: string, side: "left" | "right") => {
+    const currentActiveTabId = activeTabIdRef.current;
+    if (tabId === currentActiveTabId && !splitState) {
+      // Splitting the current single tab: keep it as active on the opposite side
+      const newState: SplitViewState = {
+        leftTabId:  side === "right" ? currentActiveTabId : tabId,
+        rightTabId: side === "right" ? tabId : currentActiveTabId,
+        ratio: 0.5,
+        activeSide: side,
+      };
+      setSplitState(newState);
+    } else {
+      const newState: SplitViewState = {
+        leftTabId:  side === "right" ? currentActiveTabId : tabId,
+        rightTabId: side === "right" ? tabId : currentActiveTabId,
+        ratio: 0.5,
+        activeSide: side,
+      };
+      setSplitState(newState);
+    }
+    setSplitDragSide(null);
+    setTimeout(() => void scheduleSyncActive(), 50);
+  }, [splitState, scheduleSyncActive]);
+
+  const handleCloseSplit = useCallback(() => {
+    setSplitState(null);
+    setSplitDragSide(null);
+    setTimeout(() => void scheduleSyncActive(), 50);
+  }, [scheduleSyncActive]);
+
+  const handleSplitRatioChange = useCallback((ratio: number) => {
+    setSplitState((prev) => prev ? { ...prev, ratio } : null);
+    setTimeout(() => void scheduleSyncActive(), 16);
+  }, [scheduleSyncActive]);
+
+  const handleSplitSwapSides = useCallback(() => {
+    setSplitState((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        leftTabId: prev.rightTabId,
+        rightTabId: prev.leftTabId,
+      };
+    });
+    setTimeout(() => void scheduleSyncActive(), 50);
+  }, [scheduleSyncActive]);
+
   // ── Native Context Menus (Website Remains 100% Visible) ───────────
 
   const handleOpenContextMenu = useCallback(
     async (data: ContextMenuData) => {
       try {
+        if (data.type === "split-divider") {
+          const items: Array<MenuItem | PredefinedMenuItem> = [
+            await MenuItem.new({
+              text: "Swap Sides",
+              action: () => handleSplitSwapSides(),
+            }),
+            await PredefinedMenuItem.new({ item: "Separator" }),
+            await MenuItem.new({
+              text: "Exit Split View",
+              action: () => handleCloseSplit(),
+            }),
+          ];
+          const menu = await Menu.new({ items });
+          await menu.popup();
+          return;
+        }
+
         if (data.type === "tab") {
           const { tab, tabIndex, totalTabs } = data;
           const isGrouped = !!tab.group;
@@ -1282,6 +1414,12 @@ export default function App() {
   const contentIsHome = activeTab.kind === "home";
   const contentIsUpdates = activeTab.kind === "updates";
   const contentIsConsole = activeTab.kind === "console";
+  // Split view only applies when the currently active tab is one of the two paired split tabs
+  const contentIsSplit =
+    splitState !== null &&
+    (activeTabId === splitState.leftTabId || activeTabId === splitState.rightTabId);
+  const splitLeftTab = splitState ? (tabs.find((t) => t.id === splitState.leftTabId) ?? null) : null;
+  const splitRightTab = splitState ? (tabs.find((t) => t.id === splitState.rightTabId) ?? null) : null;
   const canGoBack = activeTab.kind === "web" && activeTab.index > 0;
   const canGoForward = activeTab.kind === "web" && activeTab.index < activeTab.history.length - 1;
   const panelIsWebApp = activePanel !== null && isWebAppPanel(activePanel);
@@ -1411,6 +1549,8 @@ export default function App() {
               tabs={visibleTabs}
               activeTabId={activeTabId}
               tabGroups={tabGroups}
+              splitState={splitState}
+              isLoading={isLoading}
               onSwitch={setActiveTabId}
               onClose={closeTab}
               onNewTab={createHomeTab}
@@ -1443,62 +1583,273 @@ export default function App() {
         <div className="viewport-container">
           {/* Sub-Navigation Toolbar flush with the tab strip */}
           <div className="sub-toolbar no-drag">
-            <div className="nav-cluster no-drag">
-              <button className="nav-btn" onClick={goBack} disabled={!canGoBack} aria-label="Back" title="Back">
-                <ChevronLeft size={15} strokeWidth={2} />
-              </button>
-              <div className="nav-divider" />
-              <button className="nav-btn" onClick={goForward} disabled={!canGoForward} aria-label="Forward" title="Forward">
-                <ChevronRight size={15} strokeWidth={2} />
-              </button>
-              <button
-                className="nav-btn"
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (activeTab.url) {
-                    navigator.clipboard.writeText(activeTab.url);
-                    showToast("URL copied to clipboard", "success");
-                  }
-                }}
-                disabled={contentIsHome}
-                aria-label="Share / Copy Link"
-                title="Share link"
-              >
-                <Upload size={13} strokeWidth={2} />
-              </button>
-              <button className="nav-btn" onClick={reloadActive} disabled={activeTab.kind !== "web"} aria-label="Reload" title="Reload">
-                <RotateCw size={13} strokeWidth={2} />
-              </button>
-            </div>
+            {contentIsSplit && splitState && splitLeftTab && splitRightTab ? (
+              <div className="split-sub-toolbar-container">
+                {/* Left Split URL & Navigation Bar */}
+                <div
+                  className={`split-sub-toolbar-half split-sub-toolbar-left ${splitState.activeSide === "left" ? "active-side" : ""}`}
+                  style={{ width: `calc(${splitState.ratio * 100}% - 4px)` }}
+                  onClick={() => setSplitState((prev) => prev ? { ...prev, activeSide: "left" } : null)}
+                >
+                  <div className="nav-cluster no-drag">
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (splitLeftTab.index > 0) {
+                          const newIdx = splitLeftTab.index - 1;
+                          const url = splitLeftTab.history[newIdx];
+                          setTabs((prev) => prev.map((t) => t.id === splitLeftTab.id ? { ...t, url, index: newIdx } : t));
+                          setTimeout(() => void scheduleSyncActive(), 50);
+                        }
+                      }}
+                      disabled={splitLeftTab.index <= 0}
+                      aria-label="Back"
+                      title="Back"
+                    >
+                      <ChevronLeft size={15} strokeWidth={2} />
+                    </button>
+                    <div className="nav-divider" />
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (splitLeftTab.index < splitLeftTab.history.length - 1) {
+                          const newIdx = splitLeftTab.index + 1;
+                          const url = splitLeftTab.history[newIdx];
+                          setTabs((prev) => prev.map((t) => t.id === splitLeftTab.id ? { ...t, url, index: newIdx } : t));
+                          setTimeout(() => void scheduleSyncActive(), 50);
+                        }
+                      }}
+                      disabled={splitLeftTab.index >= splitLeftTab.history.length - 1}
+                      aria-label="Forward"
+                      title="Forward"
+                    >
+                      <ChevronRight size={15} strokeWidth={2} />
+                    </button>
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (splitLeftTab.url) {
+                          navigator.clipboard.writeText(splitLeftTab.url);
+                          showToast("URL copied to clipboard", "success");
+                        }
+                      }}
+                      disabled={!splitLeftTab.url}
+                      aria-label="Share / Copy Link"
+                      title="Share link"
+                    >
+                      <Upload size={13} strokeWidth={2} />
+                    </button>
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsLoading(true);
+                        void recreateTabWebview(splitLeftTab).finally(() => {
+                          setTimeout(() => setIsLoading(false), 700);
+                        });
+                      }}
+                      disabled={splitLeftTab.kind !== "web"}
+                      aria-label="Reload"
+                      title="Reload"
+                    >
+                      <RotateCw size={13} strokeWidth={2} className={isLoading ? "tab-loading-spin" : ""} />
+                    </button>
+                  </div>
 
-            {!contentIsHome && !contentIsUpdates && !contentIsConsole && (
-              <Omnibox
-                url={activeTab.url}
-                query={query}
-                onQueryChange={setQuery}
-                onSubmit={(value) => openInput(value)}
-                suggestions={suggestions}
-                onScan={triggerScan}
-                onVoice={startVoiceSearch}
-                isListening={isListening}
-              />
+                  <Omnibox
+                    url={splitLeftTab.url || ""}
+                    query={splitState.activeSide === "left" ? query : ""}
+                    onQueryChange={(val) => {
+                      if (splitState.activeSide === "left") setQuery(val);
+                    }}
+                    onSubmit={(value) => {
+                      let url = value.trim();
+                      if (!url) return;
+                      if (!/^https?:\/\//i.test(url) && !url.startsWith("http")) {
+                        url = url.includes(".") && !url.includes(" ")
+                          ? `https://${url}`
+                          : `https://www.google.com/search?q=${encodeURIComponent(url)}`;
+                      }
+                      const newHistory = [...splitLeftTab.history.slice(0, splitLeftTab.index + 1), url];
+                      setTabs((prev) => prev.map((t) =>
+                        t.id === splitLeftTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: url } : t
+                      ));
+                      setTimeout(() => void scheduleSyncActive(), 50);
+                    }}
+                    suggestions={splitState.activeSide === "left" ? suggestions : []}
+                    onScan={triggerScan}
+                    onVoice={startVoiceSearch}
+                    isListening={isListening}
+                  />
+                </div>
+
+                {/* Vertical Blue Separator between the two URL bars in toolbar */}
+                <div className="split-sub-toolbar-divider" />
+
+                {/* Right Split URL & Navigation Bar */}
+                <div
+                  className={`split-sub-toolbar-half split-sub-toolbar-right ${splitState.activeSide === "right" ? "active-side" : ""}`}
+                  style={{ width: `calc(${(1 - splitState.ratio) * 100}% - 4px)` }}
+                  onClick={() => setSplitState((prev) => prev ? { ...prev, activeSide: "right" } : null)}
+                >
+                  <div className="nav-cluster no-drag">
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (splitRightTab.index > 0) {
+                          const newIdx = splitRightTab.index - 1;
+                          const url = splitRightTab.history[newIdx];
+                          setTabs((prev) => prev.map((t) => t.id === splitRightTab.id ? { ...t, url, index: newIdx } : t));
+                          setTimeout(() => void scheduleSyncActive(), 50);
+                        }
+                      }}
+                      disabled={splitRightTab.index <= 0}
+                      aria-label="Back"
+                      title="Back"
+                    >
+                      <ChevronLeft size={15} strokeWidth={2} />
+                    </button>
+                    <div className="nav-divider" />
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (splitRightTab.index < splitRightTab.history.length - 1) {
+                          const newIdx = splitRightTab.index + 1;
+                          const url = splitRightTab.history[newIdx];
+                          setTabs((prev) => prev.map((t) => t.id === splitRightTab.id ? { ...t, url, index: newIdx } : t));
+                          setTimeout(() => void scheduleSyncActive(), 50);
+                        }
+                      }}
+                      disabled={splitRightTab.index >= splitRightTab.history.length - 1}
+                      aria-label="Forward"
+                      title="Forward"
+                    >
+                      <ChevronRight size={15} strokeWidth={2} />
+                    </button>
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (splitRightTab.url) {
+                          navigator.clipboard.writeText(splitRightTab.url);
+                          showToast("URL copied to clipboard", "success");
+                        }
+                      }}
+                      disabled={!splitRightTab.url}
+                      aria-label="Share / Copy Link"
+                      title="Share link"
+                    >
+                      <Upload size={13} strokeWidth={2} />
+                    </button>
+                    <button
+                      className="nav-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsLoading(true);
+                        void recreateTabWebview(splitRightTab).finally(() => {
+                          setTimeout(() => setIsLoading(false), 700);
+                        });
+                      }}
+                      disabled={splitRightTab.kind !== "web"}
+                      aria-label="Reload"
+                      title="Reload"
+                    >
+                      <RotateCw size={13} strokeWidth={2} className={isLoading ? "tab-loading-spin" : ""} />
+                    </button>
+                  </div>
+
+                  <Omnibox
+                    url={splitRightTab.url || ""}
+                    query={splitState.activeSide === "right" ? query : ""}
+                    onQueryChange={(val) => {
+                      if (splitState.activeSide === "right") setQuery(val);
+                    }}
+                    onSubmit={(value) => {
+                      let url = value.trim();
+                      if (!url) return;
+                      if (!/^https?:\/\//i.test(url) && !url.startsWith("http")) {
+                        url = url.includes(".") && !url.includes(" ")
+                          ? `https://${url}`
+                          : `https://www.google.com/search?q=${encodeURIComponent(url)}`;
+                      }
+                      const newHistory = [...splitRightTab.history.slice(0, splitRightTab.index + 1), url];
+                      setTabs((prev) => prev.map((t) =>
+                        t.id === splitRightTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: url } : t
+                      ));
+                      setTimeout(() => void scheduleSyncActive(), 50);
+                    }}
+                    suggestions={splitState.activeSide === "right" ? suggestions : []}
+                    onScan={triggerScan}
+                    onVoice={startVoiceSearch}
+                    isListening={isListening}
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="nav-cluster no-drag">
+                  <button className="nav-btn" onClick={goBack} disabled={!canGoBack} aria-label="Back" title="Back">
+                    <ChevronLeft size={15} strokeWidth={2} />
+                  </button>
+                  <div className="nav-divider" />
+                  <button className="nav-btn" onClick={goForward} disabled={!canGoForward} aria-label="Forward" title="Forward">
+                    <ChevronRight size={15} strokeWidth={2} />
+                  </button>
+                  <button
+                    className="nav-btn"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (activeTab.url) {
+                        navigator.clipboard.writeText(activeTab.url);
+                        showToast("URL copied to clipboard", "success");
+                      }
+                    }}
+                    disabled={contentIsHome}
+                    aria-label="Share / Copy Link"
+                    title="Share link"
+                  >
+                    <Upload size={13} strokeWidth={2} />
+                  </button>
+                  <button className="nav-btn" onClick={reloadActive} disabled={activeTab.kind !== "web"} aria-label="Reload" title="Reload">
+                    <RotateCw size={13} strokeWidth={2} className={isReloading ? "tab-loading-spin" : ""} />
+                  </button>
+                </div>
+
+                {!contentIsHome && !contentIsUpdates && !contentIsConsole && (
+                  <Omnibox
+                    url={activeTab.url}
+                    query={query}
+                    onQueryChange={setQuery}
+                    onSubmit={(value) => openInput(value)}
+                    suggestions={suggestions}
+                    onScan={triggerScan}
+                    onVoice={startVoiceSearch}
+                    isListening={isListening}
+                  />
+                )}
+
+                <div className="sub-toolbar-spacer" />
+
+                {/* Reorganized chrome actions positioned at the END of the sub-toolbar */}
+                <ChromeActions
+                  activePanel={activePanel}
+                  onTogglePanel={togglePanel}
+                  onNewTab={createHomeTab}
+                  isSidebarPinned={isSidebarPinned}
+                  onToggleSidebarPin={() => setIsSidebarPinned(!isSidebarPinned)}
+                />
+              </>
             )}
-
-            <div className="sub-toolbar-spacer" />
-
-            {/* Reorganized chrome actions positioned at the END of the sub-toolbar */}
-            <ChromeActions
-              activePanel={activePanel}
-              onTogglePanel={togglePanel}
-              onNewTab={createHomeTab}
-              isSidebarPinned={isSidebarPinned}
-              onToggleSidebarPin={() => setIsSidebarPinned(!isSidebarPinned)}
-            />
           </div>
 
           {/* Web Viewport & Home Screen Area */}
           <main
-            className="viewport-content"
+            className={`viewport-content${contentIsSplit ? " split-active" : ""}`}
             ref={contentRef}
             onContextMenu={(e) => {
               e.preventDefault();
@@ -1509,8 +1860,56 @@ export default function App() {
                 url: activeTab.kind === "web" ? activeTab.url : undefined,
               });
             }}
+            onPointerMove={(e) => {
+              const isDraggingTab = (window as unknown as Record<string, unknown>).__aegisDraggingTabId != null;
+              if (!isDraggingTab) {
+                if (splitDragSide !== null) setSplitDragSide(null);
+                return;
+              }
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              const relX = (e.clientX - rect.left) / rect.width;
+              // 0-20%: preview hint; 20-35%: active drop zone; >65%: right drop
+              if (relX < 0.35) {
+                if (splitDragSide !== "left") setSplitDragSide("left");
+              } else if (relX > 0.65) {
+                if (splitDragSide !== "right") setSplitDragSide("right");
+              } else {
+                if (splitDragSide !== null) setSplitDragSide(null);
+              }
+            }}
+            onPointerUp={() => {
+              const draggingId = (window as unknown as Record<string, unknown>).__aegisDraggingTabId as string | null;
+              if (draggingId && splitDragSide) {
+                handleTabDropOnSplit(draggingId, splitDragSide);
+              } else {
+                setSplitDragSide(null);
+              }
+            }}
+            onPointerLeave={() => {
+              if (splitDragSide !== null) setSplitDragSide(null);
+            }}
           >
-            {contentIsHome ? (
+            {/* Split drop zone overlays (shown while dragging a tab near an edge) */}
+            {splitDragSide && (
+              <SplitDropOverlay
+                side={splitDragSide}
+                draggedTab={tabs.find((t) => t.id === ((window as unknown as Record<string, unknown>).__aegisDraggingTabId as string)) ?? null}
+              />
+            )}
+
+            {/* Split screen dual pane view */}
+            {contentIsSplit && splitState && (
+              <SplitViewport
+                splitState={splitState}
+                leftRef={splitLeftRef}
+                rightRef={splitRightRef}
+                onRatioChange={handleSplitRatioChange}
+                onActiveSideChange={(side) => setSplitState((prev) => prev ? { ...prev, activeSide: side } : null)}
+                onOpenContextMenu={handleOpenContextMenu}
+              />
+            )}
+
+            {!contentIsSplit && contentIsHome ? (
               <HomeScreen
                 settings={settings}
                 query={query}
@@ -1522,15 +1921,15 @@ export default function App() {
               />
             ) : null}
 
-            {contentIsUpdates && <UpdatesScreen />}
-            {contentIsConsole && <DevConsoleScreen />}
+            {!contentIsSplit && contentIsUpdates && <UpdatesScreen />}
+            {!contentIsSplit && contentIsConsole && <DevConsoleScreen />}
 
-            {!contentIsHome && !contentIsUpdates && !contentIsConsole && (
+            {!contentIsSplit && !contentIsHome && !contentIsUpdates && !contentIsConsole && (
               <div className={`loading-bar ${isLoading ? "loading" : ""}`} />
             )}
             <div
               className={`webview-holder ${
-                contentIsHome || contentIsUpdates || contentIsConsole ? "hidden" : ""
+                contentIsSplit || contentIsHome || contentIsUpdates || contentIsConsole ? "hidden" : ""
               }`}
             />
           </main>

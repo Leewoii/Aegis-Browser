@@ -1,7 +1,10 @@
-import { Globe, Youtube, Mail, FileText, Circle, RefreshCw, Terminal } from "lucide-react";
+﻿import { Globe, Youtube, Mail, FileText, Circle, RefreshCw, Terminal, Loader2 } from "lucide-react";
 import type { Tab } from "../types";
 
-export function Favicon({ tab }: { tab: Tab }) {
+export function Favicon({ tab, isLoading }: { tab: Tab; isLoading?: boolean }) {
+  if (isLoading) {
+    return <Loader2 size={14} className="tab-favicon tab-loading-spin" />;
+  }
   if (tab.kind === "home") {
     return <Globe size={14} className="tab-favicon globe" />;
   }

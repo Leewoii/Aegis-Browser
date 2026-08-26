@@ -36,6 +36,11 @@ export type ContextMenuData =
       x: number;
       y: number;
       url?: string;
+    }
+  | {
+      type: "split-divider";
+      x: number;
+      y: number;
     };
 
 interface ContextMenuProps {
@@ -325,11 +330,11 @@ export function ContextMenu({
         <span>New Tab</span>
       </button>
 
-      {data.url && (
+      {data.type === "page" && data.url && (
         <button
           className="context-menu-item"
           onClick={() => {
-            if (data.url) navigator.clipboard.writeText(data.url);
+            if (data.type === "page" && data.url) navigator.clipboard.writeText(data.url);
             onClose();
           }}
         >

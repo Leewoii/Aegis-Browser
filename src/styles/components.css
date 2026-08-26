@@ -1394,17 +1394,40 @@
 .dev-console-screen {
   position: relative;
   z-index: 5;
-  width: min(1280px, 100%);
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
   margin: 0 auto;
-  padding: 24px 28px 60px;
+  padding: 24px 32px 80px;
   color: var(--text-primary);
   animation: home-in 240ms var(--ease-out);
   box-sizing: border-box;
   font-family: var(--font-sans);
+  scrollbar-gutter: stable;
+}
+
+.dev-console-screen::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dev-console-screen::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.dev-console-screen::-webkit-scrollbar-thumb {
+  background: var(--border-subtle, rgba(255, 255, 255, 0.15));
+  border-radius: 4px;
+}
+
+.dev-console-screen::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-a, #3b5bdb);
 }
 
 .dev-console-header {
+  max-width: 1280px;
+  margin: 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1545,7 +1568,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
-  margin-top: 18px;
+  max-width: 1280px;
+  margin: 18px auto 0;
 }
 
 .dev-metric-card {
@@ -1655,7 +1679,8 @@
 
 /* Diagnostic Table Banner */
 .dev-diag-banner {
-  margin-top: 14px;
+  max-width: 1280px;
+  margin: 14px auto 0;
   padding: 12px 16px;
   border-radius: 10px;
   border: 1px solid rgba(110, 155, 255, 0.25);
@@ -1700,7 +1725,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 18px;
+  max-width: 1280px;
+  margin: 18px auto 0;
   padding: 12px 14px;
   border-radius: 12px;
   background: rgba(15, 18, 28, 0.7);
@@ -1830,7 +1856,8 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 14px;
+  max-width: 1280px;
+  margin: 14px auto 0;
 }
 
 .dev-console-empty {

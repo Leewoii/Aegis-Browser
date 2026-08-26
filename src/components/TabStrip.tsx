@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
-import { Layers, Plus, X } from "lucide-react";
-import type { Tab, TabGroup as TabGroupType } from "../types";
+import { Columns2, Layers, Plus, X } from "lucide-react";
+import type { Tab, TabGroup as TabGroupType, SplitViewState } from "../types";
 import { HOME_TAB_ID } from "../utils/browser";
 import { Favicon } from "./Favicon";
 import type { ContextMenuData } from "./ContextMenu";
@@ -9,6 +9,8 @@ interface TabStripProps {
   tabs: Tab[];
   activeTabId: string;
   tabGroups: Record<string, TabGroupType>;
+  splitState?: SplitViewState | null;
+  isLoading?: boolean;
   onSwitch: (id: string) => void;
   onClose: (id: string) => void;
   onNewTab: () => void;
@@ -23,6 +25,8 @@ export function TabStrip({
   tabs,
   activeTabId,
   tabGroups,
+  splitState,
+  isLoading,
   onSwitch,
   onClose,
   onNewTab,
@@ -163,6 +167,8 @@ export function TabStrip({
             setIsDragging(true);
             setDraggedTabId(pendingTabIdRef.current);
             setDragPos({ x: e.clientX, y: e.clientY });
+            // Publish dragging tab id globally so viewport can detect split drop zones
+            (window as unknown as Record<string, unknown>).__aegisDraggingTabId = pendingTabIdRef.current;
           }
         }
       } else {
@@ -182,6 +188,9 @@ export function TabStrip({
       const currentTargetTabId = targetTabId;
       const currentTargetGroupId = targetGroupId;
       const groupingActive = isGroupingPreview;
+
+      // Clear global drag id
+      (window as unknown as Record<string, unknown>).__aegisDraggingTabId = null;
 
       // Clean up pointer capture
       pointerIdRef.current = null;
@@ -378,11 +387,25 @@ export function TabStrip({
           const isTabDragged = draggedTabId === tab.id;
           const tabIdx = tabs.findIndex((t) => t.id === tab.id);
 
+          // Split-paired: is this tab part of the current split pair?
+          const isSplitLeft = splitState?.leftTabId === tab.id;
+          const isSplitRight = splitState?.rightTabId === tab.id;
+          const isSplitTab = isSplitLeft || isSplitRight;
+          // Get partner tab for the combined chip display
+          const partnerTabId = isSplitLeft ? splitState?.rightTabId : splitState?.leftTabId;
+          const partnerTab = partnerTabId ? tabs.find((t) => t.id === partnerTabId) : null;
+
+          // Don't render the right split tab as its own separate chip —
+          // the left tab renders the combined dual pill instead
+          if (isSplitRight && partnerTab) {
+            return null;
+          }
+
           return (
             <div
               key={tab.id}
               data-tab-id={tab.id}
-              className={`tab-wrapper no-drag ${isActive ? "active-wrapper" : ""} ${isTarget && isGroupingPreview ? "grouping-preview-target" : ""} ${isTabDragged ? "source-dragging" : ""}`}
+              className={`tab-wrapper no-drag ${isActive ? "active-wrapper" : ""} ${isTarget && isGroupingPreview ? "grouping-preview-target" : ""} ${isTabDragged ? "source-dragging" : ""} ${isSplitTab ? "split-tab-wrapper" : ""}`}
               onPointerDown={(e) => handlePointerDownTab(e, tab.id)}
               onAuxClick={(e) => {
                 if (e.button === 1 && tab.id !== HOME_TAB_ID) {
@@ -411,15 +434,74 @@ export function TabStrip({
                 </svg>
               )}
               <div
-                className={`tab ${isActive ? "active" : ""} ${isTarget && isGroupingPreview ? "target-pulse" : ""}`}
+                className={`tab ${isActive ? "active" : ""} ${isTarget && isGroupingPreview ? "target-pulse" : ""} ${isSplitTab ? "tab-split-paired" : ""}`}
                 role="tab"
                 aria-selected={isActive}
-                title={tab.title}
+                title={isSplitTab && partnerTab ? `Split: ${tab.title} | ${partnerTab.title}` : tab.title}
               >
-                <span className="tab-icon">
-                  <Favicon tab={tab} />
-                </span>
-                <span className="tab-title">{tab.title}</span>
+                {isSplitTab && partnerTab ? (
+                  // Combined dual tab chip with individual close buttons
+                  <div className="tab-split-combined-chip">
+                    <div
+                      className="tab-split-half tab-split-left-half"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSwitch(tab.id);
+                      }}
+                      title={tab.title}
+                    >
+                      <span className="tab-icon">
+                        <Favicon tab={tab} />
+                      </span>
+                      <span className="tab-split-name">{tab.title}</span>
+                      <span
+                        className="tab-split-close-btn no-drag"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onClose(tab.id);
+                        }}
+                        title={`Close ${tab.title}`}
+                      >
+                        <X size={10} strokeWidth={2} />
+                      </span>
+                    </div>
+
+                    <span className="tab-split-divider-icon" title="Split view">
+                      <Columns2 size={9} strokeWidth={2.4} />
+                    </span>
+
+                    <div
+                      className="tab-split-half tab-split-right-half"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSwitch(partnerTab.id);
+                      }}
+                      title={partnerTab.title}
+                    >
+                      <span className="tab-icon">
+                        <Favicon tab={partnerTab} />
+                      </span>
+                      <span className="tab-split-name">{partnerTab.title}</span>
+                      <span
+                        className="tab-split-close-btn no-drag"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onClose(partnerTab.id);
+                        }}
+                        title={`Close ${partnerTab.title}`}
+                      >
+                        <X size={10} strokeWidth={2} />
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <span className="tab-icon">
+                      <Favicon tab={tab} isLoading={isActive && isLoading} />
+                    </span>
+                    <span className="tab-title">{tab.title}</span>
+                  </>
+                )}
 
                 {isTarget && isGroupingPreview && (
                   <span className="group-preview-badge" title="Release to group tabs">
@@ -428,7 +510,7 @@ export function TabStrip({
                   </span>
                 )}
 
-                {tab.id !== HOME_TAB_ID && !(isTarget && isGroupingPreview) && (
+                {!isSplitTab && tab.id !== HOME_TAB_ID && !(isTarget && isGroupingPreview) && (
                   <span
                     className="tab-close no-drag"
                     onClick={(event) => {

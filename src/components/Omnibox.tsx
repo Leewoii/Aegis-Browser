@@ -1,9 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Globe, Mic, ScanSearch, Search } from "lucide-react";
+import type { HistoryEntry, Bookmark } from "../types";
 
 export interface Suggestion {
   title: string;
   url: string;
+}
+
+export function useSuggestions(query: string, history: HistoryEntry[], bookmarks: Bookmark[]): Suggestion[] {
+  return useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const fromHistory: Suggestion[] = (history || [])
+      .filter((h) => h.title.toLowerCase().includes(q) || h.url.toLowerCase().includes(q))
+      .map((h) => ({ title: h.title, url: h.url }));
+    const fromBookmarks: Suggestion[] = (bookmarks || [])
+      .filter((b) => b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q))
+      .map((b) => ({ title: b.title, url: b.url }));
+    const merged = [...fromBookmarks, ...fromHistory];
+    const seen = new Set<string>();
+    return merged
+      .filter((item) => {
+        if (seen.has(item.url)) return false;
+        seen.add(item.url);
+        return true;
+      })
+      .slice(0, 6);
+  }, [query, history, bookmarks]);
 }
 
 interface OmniboxProps {
@@ -28,23 +51,38 @@ export function Omnibox({
   isListening,
 }: OmniboxProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const [inputValue, setInputValue] = useState(query || url || "");
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Sync inputValue with url or query when tab/url changes and user is not actively typing
+  useEffect(() => {
+    if (!isFocused) {
+      setInputValue(query || url || "");
+    }
+  }, [url, query, isFocused]);
 
   // Close suggestions on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
         setShowSuggestions(false);
+        setIsFocused(false);
+        setInputValue(url || "");
+        onQueryChange("");
       }
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+  }, [url, onQueryChange]);
 
-  const visible = showSuggestions && suggestions.length > 0;
+  const visible = showSuggestions && suggestions.length > 0 && isFocused;
 
   function selectSuggestion(selected: string) {
     setShowSuggestions(false);
+    setIsFocused(false);
+    setInputValue(selected);
     onQueryChange("");
     onSubmit(selected);
   }
@@ -56,24 +94,50 @@ export function Omnibox({
         onSubmit={(event) => {
           event.preventDefault();
           setShowSuggestions(false);
-          onSubmit(query || url || "");
+          setIsFocused(false);
+          const finalVal = inputValue.trim() || url || "";
+          inputRef.current?.blur();
+          onSubmit(finalVal);
         }}
       >
         <Search size={15} className="omnibox-icon" />
         <input
           id="omnibox"
-          value={query}
+          ref={inputRef}
+          value={inputValue}
           onChange={(event) => {
-            onQueryChange(event.target.value);
-            if (event.target.value.trim()) setShowSuggestions(true);
+            const val = event.target.value;
+            setInputValue(val);
+            onQueryChange(val);
+            if (val.trim()) setShowSuggestions(true);
           }}
-          onFocus={() => {
-            if (query.trim()) setShowSuggestions(true);
+          onFocus={(e) => {
+            setIsFocused(true);
+            // Select entire text on focus so user can immediately Copy (Ctrl+C) or type over it
+            e.currentTarget.select();
+            if (inputValue.trim() && inputValue !== url) setShowSuggestions(true);
+          }}
+          onBlur={() => {
+            // Delay slightly so suggestion clicks still register
+            setTimeout(() => {
+              if (document.activeElement !== inputRef.current) {
+                setIsFocused(false);
+                if (!inputValue.trim()) {
+                  setInputValue(url || "");
+                }
+              }
+            }, 120);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setShowSuggestions(false);
+            if (e.key === "Escape") {
+              setShowSuggestions(false);
+              setIsFocused(false);
+              setInputValue(url || "");
+              onQueryChange("");
+              inputRef.current?.blur();
+            }
           }}
-          placeholder={url || "Search or enter address"}
+          placeholder="Search or enter address"
           spellCheck={false}
           autoComplete="off"
         />
@@ -111,28 +175,4 @@ export function Omnibox({
       )}
     </div>
   );
-}
-
-export function useSuggestions(
-  query: string,
-  historyEntries: Array<{ url: string; title: string }>,
-  bookmarks: Array<{ url: string; title: string }>,
-): Suggestion[] {
-  return useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
-    const matches = new Map<string, Suggestion>();
-
-    for (const entry of historyEntries) {
-      if (entry.url.toLowerCase().includes(q) || entry.title.toLowerCase().includes(q)) {
-        matches.set(entry.url, { title: entry.title || entry.url, url: entry.url });
-      }
-    }
-    for (const bm of bookmarks) {
-      if (bm.url.toLowerCase().includes(q) || bm.title.toLowerCase().includes(q)) {
-        matches.set(bm.url, { title: bm.title, url: bm.url });
-      }
-    }
-    return Array.from(matches.values()).slice(0, 8);
-  }, [query, historyEntries, bookmarks]);
 }
