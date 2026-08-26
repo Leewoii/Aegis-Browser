@@ -1,9 +1,12 @@
 name: Release Aegis Browser
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.3.0 or v1.3.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,24 +15,186 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - uses: tauri-apps/tauri-action@v0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Resolve and validate version
+        id: version
+        shell: pwsh
+        run: |
+          $raw = "${{ inputs.version }}"
+          $ver = $raw.Trim().TrimStart('v').Trim()
+          if (-not ($ver -match '^\d+\.\d+\.\d+(-[\w\.]+)?$')) {
+            Write-Error "Invalid version '$raw'. Expected semver like 1.3.0"
+            exit 1
+          }
+          Write-Host "Resolved version: $ver"
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=v$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Update versions in package.json, tauri.conf.json, Cargo.toml
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          Write-Host "Updating project version to $ver"
+
+          # package.json
+          $pkgPath = "package.json"
+          $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+          $pkg.version = $ver
+          ($pkg | ConvertTo-Json -Depth 10) | Set-Content $pkgPath -Encoding utf8
+          Write-Host "Updated $pkgPath"
+
+          # src-tauri/tauri.conf.json
+          $tauriPath = "src-tauri/tauri.conf.json"
+          $tauri = Get-Content $tauriPath -Raw | ConvertFrom-Json
+          $tauri.version = $ver
+          ($tauri | ConvertTo-Json -Depth 20) | Set-Content $tauriPath -Encoding utf8
+          Write-Host "Updated $tauriPath"
+
+          # src-tauri/Cargo.toml
+          $cargoPath = "src-tauri/Cargo.toml"
+          $cargo = Get-Content $cargoPath -Raw
+          $cargo = $cargo -replace '(?m)^version\s*=\s*".*"', "version = `"$ver`""
+          Set-Content $cargoPath -Value $cargo -Encoding utf8
+          Write-Host "Updated $cargoPath"
+
+          Write-Host "--- Verifying ---"
+          Write-Host "package.json: $((Get-Content $pkgPath -Raw | ConvertFrom-Json).version)"
+          Write-Host "tauri.conf.json: $((Get-Content $tauriPath -Raw | ConvertFrom-Json).version)"
+          Write-Host "Cargo.toml: $((Select-String -Path $cargoPath -Pattern '^version\s*=' | Select-Object -First 1))"
+
+      - name: Build Tauri bundle (nsis + updater artifacts)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --bundles nsis
+
+      - name: Rename artifacts to Aegis.Browser_vX.X.X_x64-setup.exe and patch latest.json
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+
+          # Locate the built NSIS installer and its signature
+          $bundleRoot = "src-tauri/target/release/bundle"
+          $exe = Get-ChildItem -Path $bundleRoot -Filter "*_x64-setup.exe" -Recurse | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "NSIS exe not found under $bundleRoot"
+            Get-ChildItem -Path $bundleRoot -Recurse | ForEach-Object { Write-Host $_.FullName }
+            exit 1
+          }
+          $sig = Get-ChildItem -Path "$($exe.DirectoryName)" -Filter "$($exe.BaseName).exe.sig" | Select-Object -First 1
+          if (-not $sig) {
+            # Tauri v2 sometimes names sig as <exe>.sig directly
+            $sig = Get-ChildItem -Path "$($exe.DirectoryName)" -Filter "*.sig" | Select-Object -First 1
+          }
+          if (-not $sig) {
+            Write-Error "Signature .sig not found next to $($exe.FullName)"
+            exit 1
+          }
+          Write-Host "Found exe: $($exe.FullName)"
+          Write-Host "Found sig: $($sig.FullName)"
+
+          $newBase = "Aegis.Browser_v${ver}_x64-setup.exe"
+          $newExe = Join-Path $exe.DirectoryName $newBase
+          $newSig = "$newExe.sig"
+
+          Move-Item -Force $exe.FullName $newExe
+          Move-Item -Force $sig.FullName $newSig
+          Write-Host "Renamed to: $newExe"
+          Write-Host "Renamed sig to: $newSig"
+
+          # Also copy to workspace root for easy upload
+          Copy-Item $newExe "Aegis.Browser_v${ver}_x64-setup.exe" -Force
+          Copy-Item $newSig "Aegis.Browser_v${ver}_x64-setup.exe.sig" -Force
+
+          # Generate correct latest.json
+          $sigContent = Get-Content $newSig -Raw
+          $sigContent = $sigContent.Trim()
+          $pubDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+          $repo = "${{ github.repository }}"
+          $url = "https://github.com/$repo/releases/download/$tag/$newBase"
+
+          $latest = [ordered]@{
+            version = $ver
+            notes = "See the release notes below for changes in this version."
+            pub_date = $pubDate
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = $sigContent
+                url = $url
+              }
+              "windows-x86_64-nsis" = [ordered]@{
+                signature = $sigContent
+                url = $url
+              }
+            }
+          }
+          $latestJson = $latest | ConvertTo-Json -Depth 10
+          $latestJson | Set-Content "latest.json" -Encoding utf8
+          # Also place next to bundle for tauri updater expectations
+          $latestJson | Set-Content (Join-Path $exe.DirectoryName "latest.json") -Encoding utf8
+          Write-Host "Generated latest.json:"
+          Write-Host $latestJson
+
+          # Export paths for release step
+          "exe_path=$newExe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "sig_path=$newSig" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+        id: rename
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tauriScript: npm run tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: "Aegis Browser ${{ github.ref_name }}"
-          releaseBody: "See the release notes below for changes in this version."
-          releaseDraft: false
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Aegis Browser ${{ steps.version.outputs.tag }}
+          body: "See the release notes below for changes in this version."
+          draft: false
           prerelease: false
-          args: --bundles nsis
-          uploadUpdaterJson: true
-          updaterJsonPreferNsis: true
+          files: |
+            Aegis.Browser_v${{ steps.version.outputs.version }}_x64-setup.exe
+            Aegis.Browser_v${{ steps.version.outputs.version }}_x64-setup.exe.sig
+            latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit version bump back to repo
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.version.outputs.version }}"
+          $tag = "${{ steps.version.outputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          # Cargo.lock may not exist or be gitignored; add if tracked
+          if (Test-Path "src-tauri/Cargo.lock") { git add src-tauri/Cargo.lock 2>$null; Write-Host "Added Cargo.lock" }
+          if (Test-Path "Cargo.lock") { git add Cargo.lock 2>$null }
+          $hasChanges = git diff --cached --quiet; $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            git commit -m "chore: bump version to $ver"
+            git tag $tag 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host "Tag $tag already exists or failed to create" }
+            git push origin HEAD 2>&1 | Write-Host
+            git push origin $tag 2>&1 | Write-Host
+          } else {
+            Write-Host "No version changes to commit"
+            # Ensure tag exists on remote
+            git tag $tag 2>$null
+            git push origin $tag 2>&1 | Write-Host
+          }
