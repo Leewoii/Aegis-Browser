@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "SilentX Browser",
+  "productName": "Aegis Browser",
   "version": "2.0.0",
   "identifier": "com.silentx.browser.v2",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SilentX Browser",
+        "title": "Aegis Browser",
         "width": 1440,
         "height": 920,
         "minWidth": 1024,
@@ -46,10 +46,10 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "publisher": "SilentX",
-    "copyright": "Copyright (c) 2026 SilentX",
+    "publisher": "Aegis",
+    "copyright": "Copyright (c) 2026 Aegis",
     "category": "DeveloperTool",
     "shortDescription": "A productivity-focused desktop web browser",
-    "longDescription": "SilentX Browser embeds commonly-used web apps into sidebar panels, reducing tab clutter and context-switching."
+    "longDescription": "Aegis Browser embeds commonly-used web apps into sidebar panels, reducing tab clutter and context-switching."
   }
 }

@@ -1,8 +1,8 @@
 [package]
 name = "silentx-browser"
 version = "2.0.0"
-description = "SilentX Browser"
-authors = ["SilentX"]
+description = "Aegis Browser"
+authors = ["Aegis"]
 license = ""
 repository = ""
 edition = "2021"

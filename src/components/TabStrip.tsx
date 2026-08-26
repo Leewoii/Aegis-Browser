@@ -404,7 +404,12 @@ export function TabStrip({
                 });
               }}
             >
-              {isActive && <div className="tab-curve-left" />}
+              {isActive && (
+                <svg className="tab-curve-left" viewBox="0 0 14 14" aria-hidden="true">
+                  <path className="tab-curve-fill" d="M14 0C14 7.7 7.7 14 0 14H14V0Z" />
+                  <path className="tab-curve-stroke" d="M14 0C14 7.7 7.7 14 0 14" />
+                </svg>
+              )}
               <div
                 className={`tab ${isActive ? "active" : ""} ${isTarget && isGroupingPreview ? "target-pulse" : ""}`}
                 role="tab"
@@ -436,7 +441,12 @@ export function TabStrip({
                   </span>
                 )}
               </div>
-              {isActive && <div className="tab-curve-right" />}
+              {isActive && (
+                <svg className="tab-curve-right" viewBox="0 0 14 14" aria-hidden="true">
+                  <path className="tab-curve-fill" d="M0 0C0 7.7 6.3 14 14 14H0V0Z" />
+                  <path className="tab-curve-stroke" d="M0 0C0 7.7 6.3 14 14 14" />
+                </svg>
+              )}
             </div>
           );
         })}

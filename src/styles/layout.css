@@ -320,7 +320,7 @@
   margin-bottom: -1px;
   border-radius: 12px 12px 0 0;
   background: var(--bg-tab-active);
-  border: 1px solid var(--border-tab-active);
+  border: 1px solid rgba(255, 255, 255, 0.32);
   border-bottom: 1px solid var(--bg-tab-active);
   color: var(--text-primary);
   font-weight: 600;
@@ -334,19 +334,27 @@
 .tab-curve-right {
   position: absolute;
   bottom: -1px;
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   pointer-events: none;
 }
 
 .tab-curve-left {
-  left: -10px;
-  background: radial-gradient(circle at 0% 0%, transparent 10px, var(--bg-tab-active) 10.5px);
+  left: -14px;
 }
 
 .tab-curve-right {
-  right: -10px;
-  background: radial-gradient(circle at 100% 0%, transparent 10px, var(--bg-tab-active) 10.5px);
+  right: -14px;
+}
+
+.tab-curve-fill {
+  fill: var(--bg-tab-active);
+}
+
+.tab-curve-stroke {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.32);
+  stroke-width: 1;
 }
 
 .tab-icon {

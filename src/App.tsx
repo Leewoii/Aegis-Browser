@@ -689,7 +689,7 @@ export default function App() {
   // ── Document chrome ───────────────────────────────────────────────
 
   useEffect(() => {
-    document.title = `SilentX Browser - ${activeTab.title}`;
+    document.title = `Aegis Browser - ${activeTab.title}`;
   }, [activeTab.title]);
 
   useEffect(() => {

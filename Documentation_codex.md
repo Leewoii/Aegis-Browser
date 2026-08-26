@@ -1,8 +1,8 @@
-# SilentX Browser Documentation
+# Aegis Browser Documentation
 
 ## 1. Project Overview
 
-SilentX Browser is a desktop browser built with:
+Aegis Browser is a desktop browser built with:
 
 - React 18 + TypeScript for the UI
 - Vite for the frontend build and dev server
@@ -615,7 +615,7 @@ Adds structured storage for:
 
 Configured in `src-tauri/tauri.conf.json`:
 
-- Product name: `SilentX Browser`
+- Product name: `Aegis Browser`
 - Identifier: `com.silentx.browser.v2`
 - Windows:
   - width 1440
@@ -1013,7 +1013,7 @@ The documentation above focuses on the editable source files, not generated outp
 
 ## 24. Short Summary
 
-SilentX Browser is a Tauri-powered desktop browser that combines:
+Aegis Browser is a Tauri-powered desktop browser that combines:
 
 - native webview tabs
 - workspace-aware session organization
@@ -1029,4 +1029,3 @@ The strongest technical themes in the project are:
 - persistence and migration
 - navigation gating for safety
 - compact, highly customized browser chrome
-
