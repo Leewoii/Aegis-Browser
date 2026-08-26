@@ -606,6 +606,32 @@
   color: var(--text-secondary);
 }
 
+.workspace-delete-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  opacity: 0;
+  flex-shrink: 0;
+  transition:
+    opacity var(--speed-fast) ease,
+    color var(--speed-fast) ease,
+    background var(--speed-fast) ease;
+}
+
+.workspace-btn:hover .workspace-delete-btn {
+  opacity: 0.6;
+}
+
+.workspace-delete-btn:hover {
+  opacity: 1 !important;
+  color: #ff6b6b !important;
+  background: rgba(255, 107, 107, 0.15);
+}
+
 .workspace-active-bar {
   position: absolute;
   left: 0;

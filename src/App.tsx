@@ -1101,6 +1101,56 @@ export default function App() {
     showToast(`Created ${newWs.name} workspace`, "success");
   }
 
+  function handleDeleteWorkspace(wsId: string) {
+    if (workspaces.length <= 1) {
+      showToast("Cannot delete the only workspace", "error");
+      return;
+    }
+
+    const wsToDelete = workspaces.find((w) => w.id === wsId);
+    const remainingWorkspaces = workspaces.filter((w) => w.id !== wsId);
+    setWorkspaces(remainingWorkspaces);
+
+    // Destroy webviews for tabs belonging to this workspace
+    const tabsInWs = tabs.filter((t) => {
+      const g = t.group ? tabGroups[t.group] : undefined;
+      return (t.workspaceId || g?.workspaceId || "personal") === wsId;
+    });
+    for (const t of tabsInWs) {
+      if (t.kind === "web") {
+        void destroyTabWebview(t.id);
+      }
+    }
+
+    // Keep tabs from other workspaces
+    const remainingTabs = tabs.filter((t) => {
+      const g = t.group ? tabGroups[t.group] : undefined;
+      return (t.workspaceId || g?.workspaceId || "personal") !== wsId;
+    });
+
+    // If active workspace was deleted, switch to the first remaining workspace
+    if (activeWorkspaceId === wsId) {
+      const nextWsId = remainingWorkspaces[0]?.id || "personal";
+      setActiveWorkspaceId(nextWsId);
+      const nextWsTabs = remainingTabs.filter((t) => {
+        const g = t.group ? tabGroups[t.group] : undefined;
+        return (t.workspaceId || g?.workspaceId || "personal") === nextWsId;
+      });
+      if (nextWsTabs.length > 0) {
+        setTabs(remainingTabs);
+        setActiveTabId(nextWsTabs[0].id);
+      } else {
+        const fallbackTab = makeHomeTab(nextWsId);
+        setTabs([...remainingTabs, fallbackTab]);
+        setActiveTabId(fallbackTab.id);
+      }
+    } else {
+      setTabs(remainingTabs.length > 0 ? remainingTabs : [makeHomeTab(activeWorkspaceId)]);
+    }
+
+    showToast(`Deleted ${wsToDelete?.name || "workspace"}`, "info");
+  }
+
   function selectWorkspace(wsId: string) {
     if (!isSidebarPinned) setIsSidebarHovered(false);
     if (!isPanelPinned) setActivePanel(null);
@@ -1494,6 +1544,7 @@ export default function App() {
         activeWorkspaceId={activeWorkspaceId}
         onSelectWorkspace={selectWorkspace}
         onAddWorkspace={() => setIsCreateWorkspaceOpen(true)}
+        onDeleteWorkspace={handleDeleteWorkspace}
         workspaceTabCounts={workspaceTabCounts}
         onHomeClick={createHomeTab}
         onConsoleClick={openDevConsoleTab}

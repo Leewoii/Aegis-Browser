@@ -23,6 +23,7 @@ import {
   Shield,
   Sparkles,
   Terminal,
+  Trash2,
   Twitch,
   RefreshCw,
   User,
@@ -39,6 +40,7 @@ interface SidebarProps {
   activeWorkspaceId: string;
   onSelectWorkspace: (wsId: string) => void;
   onAddWorkspace: () => void;
+  onDeleteWorkspace: (wsId: string) => void;
   workspaceTabCounts: Record<string, number>;
   onHomeClick: () => void;
   onConsoleClick: () => void;
@@ -60,6 +62,7 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
     activeWorkspaceId,
     onSelectWorkspace,
     onAddWorkspace,
+    onDeleteWorkspace,
     workspaceTabCounts,
     onHomeClick,
     onConsoleClick,
@@ -193,6 +196,18 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
                     <>
                       <span className="workspace-name">{ws.name}</span>
                       {count > 0 && <span className="workspace-badge">{count}</span>}
+                      {workspaces.length > 1 && (
+                        <span
+                          className="workspace-delete-btn"
+                          title={`Delete ${ws.name} workspace`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDeleteWorkspace(ws.id);
+                          }}
+                        >
+                          <Trash2 size={12} strokeWidth={1.8} />
+                        </span>
+                      )}
                     </>
                   )}
                   {isActive && <div className="workspace-active-bar" style={{ backgroundColor: ws.color }} />}

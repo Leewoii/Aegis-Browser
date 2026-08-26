@@ -32,6 +32,8 @@
     "core:webview:allow-set-webview-focus",
     "sql:allow-execute",
     "sql:default",
-    "updater:default"
+    "updater:default",
+    "core:app:default",
+    "core:app:allow-version"
   ]
 }

@@ -23,12 +23,21 @@ export function UpdatesScreen() {
     setState("checking");
     setError("");
     setProgress(null);
+
+    // Always resolve current version independently — a failing updater check (404 in dev / no release yet) must not hide the installed version.
     try {
-      const [version, availableUpdate] = await Promise.all([getVersion(), check()]);
+      const version = await getVersion();
       setCurrentVersion(version);
+    } catch {
+      // Keep fallback "1.0.0" if app version is unavailable (e.g. missing permission).
+    }
+
+    try {
+      const availableUpdate = await check();
       setUpdate(availableUpdate);
       setState(availableUpdate ? "available" : "current");
     } catch (reason) {
+      setUpdate(null);
       setState("error");
       let message =
         typeof reason === "string"
