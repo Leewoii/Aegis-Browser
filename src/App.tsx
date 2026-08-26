@@ -32,6 +32,7 @@ import {
   DEFAULT_WORKSPACES,
   defaultTabs,
   makeHomeTab,
+  makeUpdatesTab,
   makeWebTab,
   normalizeInput,
   titleFromUrl,
@@ -70,6 +71,7 @@ import { TabStrip } from "./components/TabStrip";
 import { ChromeActions } from "./components/ChromeActions";
 import { Omnibox, useSuggestions } from "./components/Omnibox";
 import { HomeScreen } from "./components/HomeScreen";
+import { UpdatesScreen } from "./components/UpdatesScreen";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toasts";
 import { PanelContent } from "./components/panels/PanelHost";
@@ -785,6 +787,19 @@ export default function App() {
     setActiveTabId(tab.id);
   }
 
+  function openUpdatesTab() {
+    if (!isSidebarPinned) setIsSidebarHovered(false);
+    if (!isPanelPinned) setActivePanel(null);
+    const existing = tabs.find((tab) => tab.kind === "updates" && tab.workspaceId === activeWorkspaceId);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const tab = makeUpdatesTab(activeWorkspaceId);
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  }
+
   function closeTab(id: string) {
     const targetTab = tabs.find((t) => t.id === id);
     if (targetTab) {
@@ -1227,6 +1242,7 @@ export default function App() {
   // ── Derived UI flags ──────────────────────────────────────────────
 
   const contentIsHome = activeTab.kind === "home";
+  const contentIsUpdates = activeTab.kind === "updates";
   const canGoBack = activeTab.kind === "web" && activeTab.index > 0;
   const canGoForward = activeTab.kind === "web" && activeTab.index < activeTab.history.length - 1;
   const panelIsWebApp = activePanel !== null && isWebAppPanel(activePanel);
@@ -1251,6 +1267,8 @@ export default function App() {
         onAddWorkspace={() => setIsCreateWorkspaceOpen(true)}
         workspaceTabCounts={workspaceTabCounts}
         onHomeClick={createHomeTab}
+        onUpdatesClick={openUpdatesTab}
+        isUpdatesOpen={contentIsUpdates}
         isHovered={isSidebarHovered}
         onHoverChange={(hovered) => {
           setIsSidebarHovered(hovered);
@@ -1412,7 +1430,7 @@ export default function App() {
               </button>
             </div>
 
-            {!contentIsHome && (
+            {!contentIsHome && !contentIsUpdates && (
               <Omnibox
                 url={activeTab.url}
                 query={query}
@@ -1463,8 +1481,10 @@ export default function App() {
               />
             ) : null}
 
-            {!contentIsHome && <div className={`loading-bar ${isLoading ? "loading" : ""}`} />}
-            <div className={`webview-holder ${contentIsHome ? "hidden" : ""}`} />
+            {contentIsUpdates && <UpdatesScreen />}
+
+            {!contentIsHome && !contentIsUpdates && <div className={`loading-bar ${isLoading ? "loading" : ""}`} />}
+            <div className={`webview-holder ${contentIsHome || contentIsUpdates ? "hidden" : ""}`} />
           </main>
         </div>
       </div>

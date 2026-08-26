@@ -12,6 +12,7 @@ pub fn run() {
   tauri::Builder::default()
     .manage(navigation::NavigationState(Arc::clone(&navigation_state)))
     .plugin(tauri_plugin_sql::Builder::default().build())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(navigation::aegis_navigation_plugin(
       navigation_state,
       injection::interception_script(),

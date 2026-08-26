@@ -31,6 +31,7 @@
     "core:webview:allow-set-webview-size",
     "core:webview:allow-set-webview-focus",
     "sql:allow-execute",
-    "sql:default"
+    "sql:default",
+    "updater:default"
   ]
 }

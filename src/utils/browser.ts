@@ -97,6 +97,20 @@ export function makeHomeTab(workspaceId = "personal"): Tab {
   };
 }
 
+export function makeUpdatesTab(workspaceId = "personal"): Tab {
+  const id = `updates-${uid()}`;
+  return {
+    id,
+    kind: "updates",
+    title: "Updates",
+    url: "",
+    label: `Aegis-updates-${id}`,
+    history: [],
+    index: -1,
+    workspaceId,
+  };
+}
+
 export function makeWebTab(url: string, title?: string, group?: string, workspaceId = "personal"): Tab {
   const id = uid();
   return {

@@ -30,3 +30,5 @@ Desktop.ini
 .env.*
 !.env.example
 
+# Tauri updater signing key (the public key is embedded in tauri.conf.json)
+src-tauri/.tauri/

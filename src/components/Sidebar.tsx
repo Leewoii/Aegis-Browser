@@ -23,6 +23,7 @@ import {
   Sparkles,
   Terminal,
   Twitch,
+  RefreshCw,
   User,
 } from "lucide-react";
 import type { PanelId, Workspace } from "../types";
@@ -39,6 +40,8 @@ interface SidebarProps {
   onAddWorkspace: () => void;
   workspaceTabCounts: Record<string, number>;
   onHomeClick: () => void;
+  onUpdatesClick: () => void;
+  isUpdatesOpen: boolean;
   isHovered?: boolean;
   onHoverChange?: (hovered: boolean) => void;
   onTransitionEnd?: () => void;
@@ -56,6 +59,8 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
     onAddWorkspace,
     workspaceTabCounts,
     onHomeClick,
+    onUpdatesClick,
+    isUpdatesOpen,
     isHovered: isHoveredProp,
     onHoverChange,
     onTransitionEnd,
@@ -319,6 +324,17 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
 
         {/* Bottom actions: Settings & Pin */}
         <div className="sidebar-footer">
+          <button
+            className={`sidebar-item ${isUpdatesOpen ? "active" : ""}`}
+            onClick={onUpdatesClick}
+            title="Check for updates"
+          >
+            <span className="sidebar-icon">
+              <RefreshCw size={15} strokeWidth={1.8} />
+            </span>
+            {expanded && <span className="sidebar-label">Updates</span>}
+          </button>
+
           <button
             className={`sidebar-item ${activePanel === "settings" ? "active" : ""}`}
             onClick={() => onTogglePanel("settings")}

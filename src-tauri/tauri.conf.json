@@ -34,7 +34,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "targets": ["msi", "nsis"],
     "windows": {
       "wix": null,
@@ -51,5 +51,16 @@
     "category": "DeveloperTool",
     "shortDescription": "A productivity-focused desktop web browser",
     "longDescription": "Aegis Browser embeds commonly-used web apps into sidebar panels, reducing tab clutter and context-switching."
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEzMjc3OThDRjA4QzYzM0MKUldROFk0endqSGtuRXk4SWhzckFQT1YrblBsNnJsV2VWcGtwbWxrZVArUk1WcDliTnpSb0w2cUoK",
+      "endpoints": [
+        "https://github.com/Leewoii/Aegis/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
