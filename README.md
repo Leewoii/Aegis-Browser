@@ -22,38 +22,6 @@ Aegis Browser is a Tauri-powered desktop browser built for fast tab switching, w
 - SQLite via `@tauri-apps/plugin-sql`
 - Rust backend commands and navigation plugin
 
-## Getting Started
-
-### Prerequisites
-
-- Node.js
-- Rust toolchain
-- Tauri prerequisites for your platform
-
-### Install
-
-```bash
-npm install
-```
-
-### Run in Development
-
-```bash
-npm run tauri:dev
-```
-
-### Build Frontend
-
-```bash
-npm run build
-```
-
-### Build Desktop App
-
-```bash
-npm run tauri:build
-```
-
 ## Scripts
 
 - `npm run dev` - start the Vite dev server

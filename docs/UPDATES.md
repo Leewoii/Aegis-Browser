@@ -1,6 +1,6 @@
 # Publishing Aegis updates
 
-The in-app updater reads the signed `latest.json` asset from the latest GitHub Release at `Leewoii/Aegis`.
+The in-app updater reads the signed `latest.json` asset from the latest GitHub Release at `Leewoii/Aegis-Browser`.
 
 ## One-time setup
 

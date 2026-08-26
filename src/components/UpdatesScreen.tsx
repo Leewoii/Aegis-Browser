@@ -30,7 +30,22 @@ export function UpdatesScreen() {
       setState(availableUpdate ? "available" : "current");
     } catch (reason) {
       setState("error");
-      setError(reason instanceof Error ? reason.message : "Unable to check for updates.");
+      let message =
+        typeof reason === "string"
+          ? reason
+          : reason instanceof Error
+          ? reason.message
+          : "Unable to check for updates.";
+
+      if (
+        message.toLowerCase().includes("could not fetch a valid release json") ||
+        message.includes("404")
+      ) {
+        message =
+          "No release manifest found on GitHub. If you haven't published a release yet or are running in development mode, this is expected.";
+      }
+
+      setError(message);
     }
   };
 

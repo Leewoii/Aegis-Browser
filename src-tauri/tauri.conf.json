@@ -54,9 +54,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEzMjc3OThDRjA4QzYzM0MKUldROFk0endqSGtuRXk4SWhzckFQT1YrblBsNnJsV2VWcGtwbWxrZVArUk1WcDliTnpSb0w2cUoK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlDOEYxNjU4QTlBQzNDQUIKUldSclBLeXBXQmFQbkhMbmxwUEJtY3dWMGFHSWtqMyttRklXTW5ja1lIZi9vWWxhNk16NnZ1K0oK",
       "endpoints": [
-        "https://github.com/Leewoii/Aegis/releases/latest/download/latest.json"
+        "https://github.com/Leewoii/Aegis-Browser/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
