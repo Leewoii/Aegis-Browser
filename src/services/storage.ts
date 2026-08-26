@@ -28,11 +28,29 @@ import {
   DEFAULT_WORKSPACES,
   HOME_TAB_ID,
 } from "../utils/browser";
+import { debugLog } from "./debug";
 
 type SqliteDatabase = Awaited<ReturnType<typeof Database.load>>;
 
 let db: SqliteDatabase | null = null;
 let initPromise: Promise<SqliteDatabase> | null = null;
+type GlobalStorageState = {
+  writeQueue: Promise<void>;
+};
+
+const globalStorageState = globalThis as typeof globalThis & {
+  __silentxStorageState?: GlobalStorageState;
+};
+
+if (!globalStorageState.__silentxStorageState) {
+  globalStorageState.__silentxStorageState = {
+    writeQueue: Promise.resolve(),
+  };
+}
+
+function getWriteQueueState(): GlobalStorageState {
+  return globalStorageState.__silentxStorageState!;
+}
 
 export async function getDb(): Promise<SqliteDatabase> {
   if (db) return db;
@@ -45,11 +63,120 @@ export async function getDb(): Promise<SqliteDatabase> {
   return initPromise;
 }
 
+function enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const state = getWriteQueueState();
+  const result = state.writeQueue.then(
+    () => retryLockedWrite(operation),
+    () => retryLockedWrite(operation),
+  );
+  state.writeQueue = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+function isBusyDatabaseError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("database is locked") || message.includes("SQLITE_BUSY");
+}
+
+async function retryLockedWrite<T>(operation: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isBusyDatabaseError(error) || attempt === attempts - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 // ---------------------------------------------------------------------------
 // Schema & Migration Helpers
 // ---------------------------------------------------------------------------
 
 async function migrateV1ToV2(database: SqliteDatabase): Promise<void> {
+  await database.execute(
+    `
+      CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        icon TEXT,
+        color TEXT,
+        idx INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS tab_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        color TEXT,
+        collapsed INTEGER NOT NULL DEFAULT 0,
+        workspace_id TEXT NOT NULL DEFAULT 'personal',
+        idx INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS tabs_v2 (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL DEFAULT '',
+        label TEXT NOT NULL,
+        history TEXT NOT NULL DEFAULT '[]',
+        idx INTEGER NOT NULL DEFAULT 0,
+        workspace_id TEXT NOT NULL DEFAULT 'personal',
+        group_id TEXT,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        muted INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT 0,
+        last_accessed_at INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS sidebar_state (
+        key TEXT PRIMARY KEY,
+        is_sidebar_pinned INTEGER NOT NULL DEFAULT 0,
+        active_panel TEXT,
+        is_panel_pinned INTEGER NOT NULL DEFAULT 0,
+        panel_width INTEGER NOT NULL DEFAULT 340,
+        muted_panels TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS session_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS closed_tabs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        tab_data TEXT NOT NULL,
+        closed_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS secure_vault (
+        key TEXT PRIMARY KEY,
+        ciphertext TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS downloads_v2 (
+        id TEXT PRIMARY KEY,
+        filename TEXT NOT NULL,
+        url TEXT NOT NULL,
+        destination TEXT,
+        total_bytes REAL NOT NULL DEFAULT 0,
+        received_bytes REAL NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'completed',
+        started_at INTEGER NOT NULL DEFAULT 0,
+        completed_at INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  );
+
   // 1. Migrate Workspaces from meta table if workspaces table is empty
   const wsCount = await database.select<[{ count: number }]>("SELECT COUNT(*) AS count FROM workspaces");
   if (wsCount[0].count === 0) {
@@ -283,13 +410,24 @@ async function migrateFromLocalStorage(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 let initialised = false;
+let initializePromise: Promise<void> | null = null;
 
 export async function initializeStorage(): Promise<void> {
   if (initialised) return;
-  const database = await getDb();
-  await migrateV1ToV2(database);
-  await migrateFromLocalStorage();
-  initialised = true;
+  if (!initializePromise) {
+    initializePromise = (async () => {
+      await enqueueWrite(async () => {
+        const database = await getDb();
+        await migrateV1ToV2(database);
+        await migrateFromLocalStorage();
+      });
+      initialised = true;
+    })().catch((error) => {
+      initializePromise = null;
+      throw error;
+    });
+  }
+  await initializePromise;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,16 +532,37 @@ export async function loadTabs(): Promise<TabsData> {
 }
 
 export async function saveTabs(tabs: Tab[], activeTabId: string): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM tabs_v2");
-  for (let i = 0; i < tabs.length; i++) {
-    const t = tabs[i];
-    await insertTab(database, { ...t, index: i });
-  }
-  await database.execute(
-    "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('activeTabId', $1, $2)",
-    [activeTabId, Date.now()],
-  );
+  return enqueueWrite(async () => {
+    // #region DEBUG
+    await debugLog(`[DEBUG H1] saveTabs start tabs=${tabs.length} activeTabId=${activeTabId}`);
+    // #endregion DEBUG
+    const database = await getDb();
+    for (let i = 0; i < tabs.length; i++) {
+      const tab = tabs[i];
+      await insertTab(database, { ...tab, index: i });
+    }
+
+    if (tabs.length === 0) {
+      await database.execute("DELETE FROM tabs_v2");
+    } else {
+      const placeholders = tabs.map((_, index) => `$${index + 1}`).join(", ");
+      await database.execute(
+        `DELETE FROM tabs_v2 WHERE id NOT IN (${placeholders})`,
+        tabs.map((tab) => tab.id),
+      );
+    }
+
+    await database.execute(
+      "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('activeTabId', $1, $2)",
+      [activeTabId, Date.now()],
+    );
+    // #region DEBUG
+    await debugLog(`[DEBUG H1] saveTabs committed tabs=${tabs.length} activeTabId=${activeTabId}`);
+    // #endregion DEBUG
+    // #region DEBUG
+    await debugLog(`[DEBUG H1] saveTabs end tabs=${tabs.length} activeTabId=${activeTabId}`);
+    // #endregion DEBUG
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -412,26 +571,28 @@ export async function saveTabs(tabs: Tab[], activeTabId: string): Promise<void> 
 
 export async function recordClosedTab(tab: Tab): Promise<void> {
   if (tab.kind === "home" || !tab.url || tab.url === "about:blank") return;
-  const database = await getDb();
-  await database.execute(
-    `INSERT OR REPLACE INTO closed_tabs (id, workspace_id, title, url, tab_data, closed_at)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      tab.id,
-      tab.workspaceId ?? "personal",
-      tab.title,
-      tab.url,
-      JSON.stringify(tab),
-      Date.now(),
-    ],
-  );
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute(
+      `INSERT OR REPLACE INTO closed_tabs (id, workspace_id, title, url, tab_data, closed_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        tab.id,
+        tab.workspaceId ?? "personal",
+        tab.title,
+        tab.url,
+        JSON.stringify(tab),
+        Date.now(),
+      ],
+    );
 
-  // Keep closed tabs history to max 30 items
-  await database.execute(
-    `DELETE FROM closed_tabs WHERE id NOT IN (
-       SELECT id FROM closed_tabs ORDER BY closed_at DESC LIMIT 30
-     )`,
-  );
+    // Keep closed tabs history to max 30 items
+    await database.execute(
+      `DELETE FROM closed_tabs WHERE id NOT IN (
+         SELECT id FROM closed_tabs ORDER BY closed_at DESC LIMIT 30
+       )`,
+    );
+  });
 }
 
 export async function loadClosedTabs(): Promise<ClosedTab[]> {
@@ -451,18 +612,20 @@ export async function loadClosedTabs(): Promise<ClosedTab[]> {
 }
 
 export async function restoreClosedTab(id: string): Promise<Tab | null> {
-  const database = await getDb();
-  const rows = await database.select<Array<{ tab_data: string }>>(
-    "SELECT tab_data FROM closed_tabs WHERE id = $1",
-    [id],
-  );
-  if (!rows.length) return null;
-  await database.execute("DELETE FROM closed_tabs WHERE id = $1", [id]);
-  try {
-    return JSON.parse(rows[0].tab_data) as Tab;
-  } catch {
-    return null;
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    const rows = await database.select<Array<{ tab_data: string }>>(
+      "SELECT tab_data FROM closed_tabs WHERE id = $1",
+      [id],
+    );
+    if (!rows.length) return null;
+    await database.execute("DELETE FROM closed_tabs WHERE id = $1", [id]);
+    try {
+      return JSON.parse(rows[0].tab_data) as Tab;
+    } catch {
+      return null;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -496,20 +659,22 @@ export async function loadGroups(): Promise<Record<string, TabGroup>> {
 }
 
 export async function saveGroups(groups: Record<string, TabGroup>): Promise<void> {
-  const database = await getDb();
-  try {
-    await database.execute("DELETE FROM tab_groups");
-    let idx = 0;
-    for (const g of Object.values(groups)) {
-      await database.execute(
-        `INSERT OR REPLACE INTO tab_groups (id, name, color, collapsed, workspace_id, idx)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [g.id, g.name, g.color || null, g.collapsed ? 1 : 0, g.workspaceId || "personal", idx++],
-      );
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    try {
+      await database.execute("DELETE FROM tab_groups");
+      let idx = 0;
+      for (const g of Object.values(groups)) {
+        await database.execute(
+          `INSERT OR REPLACE INTO tab_groups (id, name, color, collapsed, workspace_id, idx)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [g.id, g.name, g.color || null, g.collapsed ? 1 : 0, g.workspaceId || "personal", idx++],
+        );
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -538,20 +703,22 @@ export async function loadWorkspaces(): Promise<Workspace[]> {
 }
 
 export async function saveWorkspaces(workspaces: Workspace[]): Promise<void> {
-  const database = await getDb();
-  try {
-    await database.execute("DELETE FROM workspaces");
-    for (let i = 0; i < workspaces.length; i++) {
-      const w = workspaces[i];
-      await database.execute(
-        `INSERT OR REPLACE INTO workspaces (id, name, icon, color, idx, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [w.id, w.name, w.icon || null, w.color || null, i, Date.now()],
-      );
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    try {
+      await database.execute("DELETE FROM workspaces");
+      for (let i = 0; i < workspaces.length; i++) {
+        const w = workspaces[i];
+        await database.execute(
+          `INSERT OR REPLACE INTO workspaces (id, name, icon, color, idx, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [w.id, w.name, w.icon || null, w.color || null, i, Date.now()],
+        );
+      }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
-  }
+  });
 }
 
 export async function loadActiveWorkspace(): Promise<string> {
@@ -576,15 +743,17 @@ export async function loadActiveWorkspace(): Promise<string> {
 }
 
 export async function saveActiveWorkspace(wsId: string): Promise<void> {
-  const database = await getDb();
-  try {
-    await database.execute(
-      "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('activeWorkspace', $1, $2)",
-      [wsId, Date.now()],
-    );
-  } catch {
-    // ignore
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    try {
+      await database.execute(
+        "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('activeWorkspace', $1, $2)",
+        [wsId, Date.now()],
+      );
+    } catch {
+      // ignore
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -635,24 +804,26 @@ export async function loadSidebarState(): Promise<SidebarState> {
 }
 
 export async function saveSidebarState(state: SidebarState): Promise<void> {
-  const database = await getDb();
-  try {
-    await database.execute(
-      `INSERT OR REPLACE INTO sidebar_state (
-         key, is_sidebar_pinned, active_panel, is_panel_pinned, panel_width, muted_panels, updated_at
-       ) VALUES ('default', $1, $2, $3, $4, $5, $6)`,
-      [
-        state.isSidebarPinned ? 1 : 0,
-        state.isPanelPinned ? state.activePanel || null : null,
-        state.isPanelPinned ? 1 : 0,
-        state.panelWidth || 340,
-        JSON.stringify(state.mutedPanels || []),
-        Date.now(),
-      ],
-    );
-  } catch {
-    // ignore
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    try {
+      await database.execute(
+        `INSERT OR REPLACE INTO sidebar_state (
+           key, is_sidebar_pinned, active_panel, is_panel_pinned, panel_width, muted_panels, updated_at
+         ) VALUES ('default', $1, $2, $3, $4, $5, $6)`,
+        [
+          state.isSidebarPinned ? 1 : 0,
+          state.isPanelPinned ? state.activePanel || null : null,
+          state.isPanelPinned ? 1 : 0,
+          state.panelWidth || 340,
+          JSON.stringify(state.mutedPanels || []),
+          Date.now(),
+        ],
+      );
+    } catch {
+      // ignore
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -675,15 +846,17 @@ export async function loadWindowState(): Promise<WindowState | null> {
 }
 
 export async function saveWindowState(state: WindowState): Promise<void> {
-  const database = await getDb();
-  try {
-    await database.execute(
-      "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('windowState', $1, $2)",
-      [JSON.stringify(state), Date.now()],
-    );
-  } catch {
-    // ignore
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    try {
+      await database.execute(
+        "INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('windowState', $1, $2)",
+        [JSON.stringify(state), Date.now()],
+      );
+    } catch {
+      // ignore
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -713,13 +886,15 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  const database = await getDb();
-  await upsertSetting(database, "theme", settings.theme);
-  await upsertSetting(database, "searchEngine", settings.searchEngine);
-  await upsertSetting(database, "homeGreeting", settings.homeGreeting);
-  await upsertSetting(database, "startupBehavior", settings.startupBehavior);
-  await upsertSetting(database, "defaultDownloadsPath", settings.defaultDownloadsPath);
-  await upsertSetting(database, "adBlockingEnabled", settings.adBlockingEnabled ? "true" : "false");
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await upsertSetting(database, "theme", settings.theme);
+    await upsertSetting(database, "searchEngine", settings.searchEngine);
+    await upsertSetting(database, "homeGreeting", settings.homeGreeting);
+    await upsertSetting(database, "startupBehavior", settings.startupBehavior);
+    await upsertSetting(database, "defaultDownloadsPath", settings.defaultDownloadsPath);
+    await upsertSetting(database, "adBlockingEnabled", settings.adBlockingEnabled ? "true" : "false");
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -748,11 +923,13 @@ export async function loadBookmarks(): Promise<Bookmark[]> {
 }
 
 export async function saveBookmarks(bookmarks: Bookmark[]): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM bookmarks");
-  for (const b of bookmarks) {
-    await insertBookmark(database, b);
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("DELETE FROM bookmarks");
+    for (const b of bookmarks) {
+      await insertBookmark(database, b);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -781,42 +958,60 @@ export async function loadHistory(): Promise<HistoryEntry[]> {
 }
 
 export async function appendHistory(entry: HistoryEntry): Promise<void> {
-  const database = await getDb();
-  const existing = await database.select<Array<{ id: number; title: string; visited_at: number }>>(
-    "SELECT id, title, visited_at FROM history WHERE url = $1 ORDER BY visited_at DESC LIMIT 1",
-    [entry.url],
-  );
-
-  if (existing.length > 0) {
-    await database.execute(
-      "UPDATE history SET title = $1, visited_at = $2 WHERE id = $3",
-      [entry.title || existing[0].title, entry.visitedAt, existing[0].id],
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] appendHistory start url=${entry.url}`);
+    // #endregion DEBUG
+    const existing = await database.select<Array<{ id: number; title: string; visited_at: number }>>(
+      "SELECT id, title, visited_at FROM history WHERE url = $1 ORDER BY visited_at DESC LIMIT 1",
+      [entry.url],
     );
-  } else {
-    await insertHistory(database, entry);
-  }
 
-  const count = await database.select<[{ count: number }]>("SELECT COUNT(*) AS count FROM history");
-  if (count[0].count > HISTORY_LIMIT) {
-    await database.execute(
-      `DELETE FROM history WHERE id NOT IN (
-         SELECT id FROM history ORDER BY visited_at DESC LIMIT ${HISTORY_LIMIT}
-       )`,
-    );
-  }
+    if (existing.length > 0) {
+      await database.execute(
+        "UPDATE history SET title = $1, visited_at = $2 WHERE id = $3",
+        [entry.title || existing[0].title, entry.visitedAt, existing[0].id],
+      );
+    } else {
+      await insertHistory(database, entry);
+    }
+
+    const count = await database.select<[{ count: number }]>("SELECT COUNT(*) AS count FROM history");
+    if (count[0].count > HISTORY_LIMIT) {
+      await database.execute(
+        `DELETE FROM history WHERE id NOT IN (
+           SELECT id FROM history ORDER BY visited_at DESC LIMIT ${HISTORY_LIMIT}
+         )`,
+      );
+    }
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] appendHistory end url=${entry.url}`);
+    // #endregion DEBUG
+  });
 }
 
 export async function clearHistory(): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM history");
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] clearHistory start`);
+    // #endregion DEBUG
+    await database.execute("DELETE FROM history");
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] clearHistory end`);
+    // #endregion DEBUG
+  });
 }
 
 export async function saveHistory(entries: HistoryEntry[]): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM history");
-  for (const entry of entries) {
-    await insertHistory(database, entry);
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("DELETE FROM history");
+    for (const entry of entries) {
+      await insertHistory(database, entry);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -843,36 +1038,48 @@ async function insertDownload(database: SqliteDatabase, dl: DownloadEntry): Prom
 }
 
 export async function upsertDownload(dl: DownloadEntry): Promise<void> {
-  const database = await getDb();
-  await insertDownload(database, dl);
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await insertDownload(database, dl);
+  });
 }
 
 export async function pauseDownload(id: string): Promise<void> {
-  const database = await getDb();
-  await database.execute("UPDATE downloads_v2 SET state = 'paused' WHERE id = $1", [id]);
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("UPDATE downloads_v2 SET state = 'paused' WHERE id = $1", [id]);
+  });
 }
 
 export async function resumeDownload(id: string): Promise<void> {
-  const database = await getDb();
-  await database.execute("UPDATE downloads_v2 SET state = 'in_progress' WHERE id = $1", [id]);
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("UPDATE downloads_v2 SET state = 'in_progress' WHERE id = $1", [id]);
+  });
 }
 
 export async function cancelDownload(id: string): Promise<void> {
-  const database = await getDb();
-  await database.execute("UPDATE downloads_v2 SET state = 'cancelled' WHERE id = $1", [id]);
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("UPDATE downloads_v2 SET state = 'cancelled' WHERE id = $1", [id]);
+  });
 }
 
 export async function retryDownload(id: string): Promise<void> {
-  const database = await getDb();
-  await database.execute(
-    "UPDATE downloads_v2 SET state = 'in_progress', received_bytes = 0 WHERE id = $1",
-    [id],
-  );
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute(
+      "UPDATE downloads_v2 SET state = 'in_progress', received_bytes = 0 WHERE id = $1",
+      [id],
+    );
+  });
 }
 
 export async function deleteDownload(id: string): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM downloads_v2 WHERE id = $1", [id]);
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("DELETE FROM downloads_v2 WHERE id = $1", [id]);
+  });
 }
 
 export async function loadDownloads(): Promise<DownloadEntry[]> {
@@ -907,11 +1114,13 @@ export async function loadDownloads(): Promise<DownloadEntry[]> {
 }
 
 export async function saveDownloads(downloads: DownloadEntry[]): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM downloads_v2");
-  for (const d of downloads) {
-    await insertDownload(database, d);
-  }
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await database.execute("DELETE FROM downloads_v2");
+    for (const d of downloads) {
+      await insertDownload(database, d);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -920,12 +1129,20 @@ export async function saveDownloads(downloads: DownloadEntry[]): Promise<void> {
 
 export async function storeSecureSecret(key: string, plaintext: string): Promise<void> {
   const ciphertext: string = await invoke("encrypt_secret", { plaintext });
-  const database = await getDb();
-  await database.execute(
-    `INSERT OR REPLACE INTO secure_vault (key, ciphertext, created_at, updated_at)
-     VALUES ($1, $2, $3, $4)`,
-    [key, ciphertext, Date.now(), Date.now()],
-  );
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] storeSecureSecret start key=${key}`);
+    // #endregion DEBUG
+    await database.execute(
+      `INSERT OR REPLACE INTO secure_vault (key, ciphertext, created_at, updated_at)
+       VALUES ($1, $2, $3, $4)`,
+      [key, ciphertext, Date.now(), Date.now()],
+    );
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] storeSecureSecret end key=${key}`);
+    // #endregion DEBUG
+  });
 }
 
 export async function retrieveSecureSecret(key: string): Promise<string | null> {
@@ -939,6 +1156,14 @@ export async function retrieveSecureSecret(key: string): Promise<string | null> 
 }
 
 export async function deleteSecureSecret(key: string): Promise<void> {
-  const database = await getDb();
-  await database.execute("DELETE FROM secure_vault WHERE key = $1", [key]);
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] deleteSecureSecret start key=${key}`);
+    // #endregion DEBUG
+    await database.execute("DELETE FROM secure_vault WHERE key = $1", [key]);
+    // #region DEBUG
+    await debugLog(`[DEBUG H2] deleteSecureSecret end key=${key}`);
+    // #endregion DEBUG
+  });
 }

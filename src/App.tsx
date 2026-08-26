@@ -81,6 +81,7 @@ import { useVoiceSearch } from "./hooks/useVoiceSearch";
 import { useQrScan } from "./hooks/useQrScan";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useWebviewManager } from "./hooks/useWebviewManager";
+import { debugLog } from "./services/debug";
 
 export default function App() {
   // ── Core browser state ────────────────────────────────────────────
@@ -119,6 +120,8 @@ export default function App() {
   const isPanelPinnedRef = useRef(isPanelPinned);
   const isSidebarPinnedRef = useRef(isSidebarPinned);
   const tabsRef = useRef(tabs);
+  const activeTabIdRef = useRef(activeTabId);
+  const isClosingRef = useRef(false);
   const storageLoadedRef = useRef(false);
 
   const { toasts, showToast, dismissToast } = useToasts();
@@ -146,6 +149,10 @@ export default function App() {
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
 
   useEffect(() => {
     activePanelRef.current = activePanel;
@@ -397,6 +404,11 @@ export default function App() {
           // ignore
         }
       }
+      // #region DEBUG
+      await debugLog(
+        `[DEBUG H1] load complete tabs=${tabsData.tabs.length} activeTabId=${tabsData.activeTabId} startBehavior=${settingsData.startupBehavior || "previous"} ws=${wsIdData || "personal"}`,
+      );
+      // #endregion DEBUG
       storageLoadedRef.current = true;
     }
     void load();
@@ -452,39 +464,43 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveTabs(tabs, activeTabId);
+    if (!storageLoadedRef.current || isClosingRef.current) return;
+    const timeout = setTimeout(() => {
+      if (!isClosingRef.current) void saveTabs(tabs, activeTabId);
+    }, 200);
+    return () => clearTimeout(timeout);
   }, [tabs, activeTabId]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveGroups(tabGroups);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveGroups(tabGroups);
   }, [tabGroups]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveWorkspaces(workspaces);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveWorkspaces(workspaces);
   }, [workspaces]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveActiveWorkspace(activeWorkspaceId);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveActiveWorkspace(activeWorkspaceId);
   }, [activeWorkspaceId]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveSettings(settings);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveSettings(settings);
   }, [settings]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveBookmarks(bookmarks);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveBookmarks(bookmarks);
   }, [bookmarks]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveHistory(historyEntries);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveHistory(historyEntries);
   }, [historyEntries]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) void saveDownloads(downloads);
+    if (storageLoadedRef.current && !isClosingRef.current) void saveDownloads(downloads);
   }, [downloads]);
 
   useEffect(() => {
-    if (storageLoadedRef.current) {
+    if (storageLoadedRef.current && !isClosingRef.current) {
       void saveSidebarState({
         isSidebarPinned,
         activePanel: isPanelPinned ? activePanel : null,
@@ -494,6 +510,54 @@ export default function App() {
       });
     }
   }, [isSidebarPinned, isPanelPinned, activePanel, panelWidth, mutedPanels]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlistenClose: (() => void) | undefined;
+
+    void getCurrentWindow()
+      .onCloseRequested(async (event) => {
+        if (isClosingRef.current) return;
+        event.preventDefault();
+        isClosingRef.current = true;
+
+        // #region DEBUG
+        await debugLog(
+          `[DEBUG H1] close requested tabs=${tabsRef.current.length} activeTabId=${activeTabIdRef.current} activeTab=${activeTabRef.current?.id ?? "none"} ws=${activeWorkspaceId}`,
+        );
+        // #endregion DEBUG
+
+        try {
+          await saveTabs(tabsRef.current, activeTabIdRef.current);
+        } catch (error) {
+          // #region DEBUG
+          await debugLog(`[DEBUG H1] flush saveTabs failed: ${error instanceof Error ? error.message : String(error)}`);
+          // #endregion DEBUG
+          console.error("Failed to flush tabs before close:", error);
+        }
+
+        try {
+          await getCurrentWindow().close();
+        } catch (error) {
+          // #region DEBUG
+          await debugLog(`[DEBUG H1] close finalizer failed: ${error instanceof Error ? error.message : String(error)}`);
+          // #endregion DEBUG
+          console.error("Failed to close window after flush:", error);
+        }
+      })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+        } else {
+          unlistenClose = cleanup;
+        }
+      });
+
+    return () => {
+      disposed = true;
+      unlistenClose?.();
+    };
+  }, []);
 
   // Keep active tab valid within visible tabs
   useEffect(() => {
@@ -595,10 +659,12 @@ export default function App() {
   // ── Webview sync effects ──────────────────────────────────────────
 
   useEffect(() => {
+    if (isClosingRef.current) return;
     void syncActive();
   }, [activeTabId, activeTab.kind, activeTab.url, activePanel, isSidebarPinned, isPanelPinned, panelWidth, activeWorkspaceId]);
 
   useEffect(() => {
+    if (isClosingRef.current) return;
     const observer = new ResizeObserver(() => scheduleSyncActive());
     if (contentRef.current) observer.observe(contentRef.current);
     window.addEventListener("resize", scheduleSyncActive);
@@ -610,6 +676,7 @@ export default function App() {
 
   // Hide webview when omnibox dropdown is visible or when a modal is open
   useEffect(() => {
+    if (isClosingRef.current) return;
     void (async () => {
       if (isOverlayActive) {
         await hideActiveWebview();
@@ -632,6 +699,7 @@ export default function App() {
   // ── Navigation actions ────────────────────────────────────────────
 
   function recordHistory(url: string, title: string) {
+    if (isClosingRef.current) return;
     if (!url || url === "about:blank") return;
     const entry: HistoryEntry = { url, title, visitedAt: Date.now() };
     setHistoryEntries((prev) => [entry, ...prev].slice(0, 500));

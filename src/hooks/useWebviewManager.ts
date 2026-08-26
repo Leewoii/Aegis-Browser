@@ -7,6 +7,7 @@ import { Webview } from "@tauri-apps/api/webview";
 import type { PanelId, Tab, ToastType } from "../types";
 import { isWebAppPanel } from "../types";
 import { WEB_APP_PANELS } from "../constants/webApps";
+import { debugLog } from "../services/debug";
 
 const RESIZE_RAF_DEBOUNCE = 0;
 
@@ -60,6 +61,9 @@ export function useWebviewManager(options: WebviewManagerOptions) {
   const panelWebviewRef = useRef<Webview | null>(null);
   const panelWebviewPanelRef = useRef<PanelId | null>(null);
   const pendingRafRef = useRef<number | null>(null);
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
+  const syncQueuedRef = useRef(false);
+  const creatingTabIdsRef = useRef<Set<string>>(new Set());
 
   // ── Tab webviews ──────────────────────────────────────────────────
 
@@ -68,8 +72,17 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     if (!wv) return;
     delete tabWebviewsRef.current[tabId];
     try {
+      // #region DEBUG
+      await debugLog(`[DEBUG H3] destroyTabWebview start tabId=${tabId}`);
+      // #endregion DEBUG
       await wv.close();
+      // #region DEBUG
+      await debugLog(`[DEBUG H3] destroyTabWebview end tabId=${tabId}`);
+      // #endregion DEBUG
     } catch (err) {
+      // #region DEBUG
+      await debugLog(`[DEBUG H3] destroyTabWebview failed tabId=${tabId} err=${err instanceof Error ? err.message : String(err)}`);
+      // #endregion DEBUG
       console.error("Failed to close webview for tab", tabId, err);
     }
   }, []);
@@ -81,7 +94,14 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     width: number,
     height: number,
   ): Promise<void> {
+    if (tabWebviewsRef.current[tab.id] || creatingTabIdsRef.current.has(tab.id)) {
+      return;
+    }
+    creatingTabIdsRef.current.add(tab.id);
     try {
+      // #region DEBUG
+      await debugLog(`[DEBUG H3] createTabWebview start tabId=${tab.id} label=${tab.label} url=${tab.url}`);
+      // #endregion DEBUG
       const wsId = tab.workspaceId || "personal";
       await invoke("allow_navigation", { label: tab.label, url: tab.url });
       const view = new Webview(getCurrentWindow(), tab.label, {
@@ -95,9 +115,17 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       });
       await waitForWebviewCreated(view);
       tabWebviewsRef.current[tab.id] = view;
+      // #region DEBUG
+      await debugLog(`[DEBUG H3] createTabWebview end tabId=${tab.id} label=${tab.label}`);
+      // #endregion DEBUG
     } catch (err) {
+      // #region DEBUG
+      await debugLog(`[DEBUG H3] createTabWebview failed tabId=${tab.id} label=${tab.label} err=${err instanceof Error ? err.message : String(err)}`);
+      // #endregion DEBUG
       console.error("Failed to create webview for tab", tab.id, err);
       showToast(`Failed to load ${tab.title}`, "error");
+    } finally {
+      creatingTabIdsRef.current.delete(tab.id);
     }
   }
 
@@ -173,70 +201,91 @@ export function useWebviewManager(options: WebviewManagerOptions) {
   // ── Combined sync ─────────────────────────────────────────────────
 
   const syncActive = useCallback(async (): Promise<void> => {
-    const tab = getActiveTab();
+    if (syncInFlightRef.current) {
+      syncQueuedRef.current = true;
+      return;
+    }
 
-    // Hide ALL inactive tab webviews, not just the previous one.
-    // This prevents stale native HWNDs from bleeding through sidebar/panels.
-    for (const [id, wv] of Object.entries(tabWebviewsRef.current)) {
-      if (id !== tab?.id) {
-        try {
-          await wv.hide();
-        } catch {
-          // webview already gone
+    const run = async () => {
+      const tab = getActiveTab();
+      // #region DEBUG
+      await debugLog(
+        `[DEBUG H3] syncActive start tab=${tab?.id ?? "none"} kind=${tab?.kind ?? "none"} overlay=${Boolean(isOverlayActiveRef?.current)} tabViews=${Object.keys(tabWebviewsRef.current).length}`,
+      );
+      // #endregion DEBUG
+
+      // Hide ALL inactive tab webviews, not just the previous one.
+      // This prevents stale native HWNDs from bleeding through sidebar/panels.
+      for (const [id, wv] of Object.entries(tabWebviewsRef.current)) {
+        if (id !== tab?.id) {
+          try {
+            await wv.hide();
+          } catch {
+            // webview already gone
+          }
         }
       }
-    }
 
-    const container = contentRef.current;
-    if (!tab || tab.kind !== "web" || !container) {
-      await syncPanelWebview();
-      return;
-    }
+      const container = contentRef.current;
+      if (!tab || tab.kind !== "web" || !container) {
+        await syncPanelWebview();
+        return;
+      }
 
-    const existingWv = tabWebviewsRef.current[tab.id];
+      const existingWv = tabWebviewsRef.current[tab.id];
 
-    if (isOverlayActiveRef?.current) {
-      if (existingWv) {
+      if (isOverlayActiveRef?.current) {
+        if (existingWv) {
+          try {
+            await existingWv.hide();
+          } catch {
+            // ignore already hidden
+          }
+        }
+        await syncPanelWebview();
+        return;
+      }
+
+      const rect = container.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        await syncPanelWebview();
+        return;
+      }
+
+      // Round outward to prevent sub-pixel bleeding over sidebar/chrome borders
+      const left = Math.ceil(rect.left);
+      const top = Math.ceil(rect.top);
+      const width = Math.floor(rect.right) - left;
+      const height = Math.floor(rect.bottom) - top;
+
+      if (width <= 0 || height <= 0) {
+        await syncPanelWebview();
+        return;
+      }
+
+      if (!existingWv) {
+        await createTabWebview(tab, left, top, width, height);
+      } else {
         try {
-          await existingWv.hide();
-        } catch {
-          // ignore already hidden
+          await existingWv.setPosition(new LogicalPosition(left, top));
+          await existingWv.setSize(new LogicalSize(width, height));
+          await existingWv.show();
+        } catch (err) {
+          console.error("Failed to reposition webview:", err);
         }
       }
+
       await syncPanelWebview();
-      return;
+    };
+
+    syncInFlightRef.current = run().finally(() => {
+      syncInFlightRef.current = null;
+    });
+    await syncInFlightRef.current;
+    if (syncQueuedRef.current) {
+      syncQueuedRef.current = false;
+      await syncActive();
     }
-
-    const rect = container.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0) {
-      await syncPanelWebview();
-      return;
-    }
-
-    // Round outward to prevent sub-pixel bleeding over sidebar/chrome borders
-    const left = Math.ceil(rect.left);
-    const top = Math.ceil(rect.top);
-    const width = Math.floor(rect.right) - left;
-    const height = Math.floor(rect.bottom) - top;
-
-    if (width <= 0 || height <= 0) {
-      await syncPanelWebview();
-      return;
-    }
-
-    if (!existingWv) {
-      await createTabWebview(tab, left, top, width, height);
-    } else {
-      try {
-        await existingWv.setPosition(new LogicalPosition(left, top));
-        await existingWv.setSize(new LogicalSize(width, height));
-        await existingWv.show();
-      } catch (err) {
-        console.error("Failed to reposition webview:", err);
-      }
-    }
-
-    await syncPanelWebview();
   }, [contentRef, panelContentRef, activePanelRef, isOverlayActiveRef]);
 
   const scheduleSyncActive = useCallback(() => {

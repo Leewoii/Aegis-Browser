@@ -1,8 +1,11 @@
 use tauri::{AppHandle, Manager, Runtime, State};
+use std::fs::{create_dir_all, OpenOptions};
+use std::io::Write;
 
 use crate::navigation::NavigationState;
 
 const ALLOWED_SCHEMES: [&str; 4] = ["http://", "https://", "file://", "data:"];
+const DEBUG_LOG_PATH: &str = r"D:\Users\Frost\Documents\Portfolio\SilentX_V2\.claude\debug.log";
 
 /// Whitelist a URL for a given webview label before the frontend triggers it.
 #[tauri::command]
@@ -90,5 +93,21 @@ pub fn clear_profile_data<R: Runtime>(
     std::fs::remove_dir_all(&profile_dir)
       .map_err(|e| format!("Failed to clear profile directory '{}': {}", profile_key, e))?;
   }
+  Ok(())
+}
+
+#[tauri::command]
+pub fn debug_log(message: String) -> Result<(), String> {
+  if let Some(parent) = std::path::Path::new(DEBUG_LOG_PATH).parent() {
+    create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+
+  let mut file = OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(DEBUG_LOG_PATH)
+    .map_err(|e| e.to_string())?;
+
+  writeln!(file, "{}", message).map_err(|e| e.to_string())?;
   Ok(())
 }
