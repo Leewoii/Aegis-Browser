@@ -585,7 +585,7 @@ export default function App() {
     let disposed = false;
     let unlisten: (() => void) | undefined;
 
-    void listen<string>("silentx-open-link", (event) => {
+    void listen<string>("Aegis-open-link", (event) => {
       const url = event.payload;
       if (typeof url !== "string" || !url.trim()) return;
       createWebTabRef.current(url, titleFromUrl(url));
@@ -607,7 +607,7 @@ export default function App() {
     let disposed = false;
     const cleanups: Array<() => void> = [];
 
-    void listen<string>("silentx-tab-pointerdown", () => {
+    void listen<string>("Aegis-tab-pointerdown", () => {
       if (!disposed) {
         if (!isPanelPinnedRef.current) {
           setActivePanel(null);
@@ -618,11 +618,11 @@ export default function App() {
       }
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
-    void listen<string>("silentx-page-load-started", () => {
+    void listen<string>("Aegis-page-load-started", () => {
       if (!disposed) setIsLoading(true);
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
-    void listen<{ label?: string; url?: string } | string>("silentx-page-load-finished", (event) => {
+    void listen<{ label?: string; url?: string } | string>("Aegis-page-load-finished", (event) => {
       if (!disposed) {
         setIsLoading(false);
         const payload = event.payload;
@@ -1150,7 +1150,7 @@ export default function App() {
         next.add(panel);
       }
       void invoke("set_webview_muted", {
-        label: `silentx-panel-${panel}`,
+        label: `Aegis-panel-${panel}`,
         muted: next.has(panel),
       }).catch((err: unknown) => console.error("Failed to toggle mute:", err));
       return next;

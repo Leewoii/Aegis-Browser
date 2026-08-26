@@ -39,23 +39,23 @@ type GlobalStorageState = {
 };
 
 const globalStorageState = globalThis as typeof globalThis & {
-  __silentxStorageState?: GlobalStorageState;
+  __AegisStorageState?: GlobalStorageState;
 };
 
-if (!globalStorageState.__silentxStorageState) {
-  globalStorageState.__silentxStorageState = {
+if (!globalStorageState.__AegisStorageState) {
+  globalStorageState.__AegisStorageState = {
     writeQueue: Promise.resolve(),
   };
 }
 
 function getWriteQueueState(): GlobalStorageState {
-  return globalStorageState.__silentxStorageState!;
+  return globalStorageState.__AegisStorageState!;
 }
 
 export async function getDb(): Promise<SqliteDatabase> {
   if (db) return db;
   if (!initPromise) {
-    initPromise = Database.load("sqlite:silentx.db").then((database) => {
+    initPromise = Database.load("sqlite:Aegis.db").then((database) => {
       db = database;
       return database;
     });

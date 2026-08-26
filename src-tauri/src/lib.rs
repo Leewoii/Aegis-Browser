@@ -12,7 +12,7 @@ pub fn run() {
   tauri::Builder::default()
     .manage(navigation::NavigationState(Arc::clone(&navigation_state)))
     .plugin(tauri_plugin_sql::Builder::default().build())
-    .plugin(navigation::silentx_navigation_plugin(
+    .plugin(navigation::aegis_navigation_plugin(
       navigation_state,
       injection::interception_script(),
     ))
@@ -26,5 +26,5 @@ pub fn run() {
       security::decrypt_secret
     ])
     .run(tauri::generate_context!())
-    .expect("error while running SilentX Browser");
+    .expect("error while running Aegis Browser");
 }

@@ -169,7 +169,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     const pHeight = Math.floor(rawRect.bottom) - pTop;
     if (pWidth <= 0 || pHeight <= 0) return;
 
-    const label = `silentx-panel-${active}`;
+    const label = `Aegis-panel-${active}`;
     const needsRecreate =
       !panelWebviewRef.current || panelWebviewPanelRef.current !== active;
 

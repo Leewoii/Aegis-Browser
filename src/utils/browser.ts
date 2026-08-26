@@ -1,19 +1,19 @@
 import type { Tab, SearchEngine, Settings, TabGroup, Workspace } from "../types";
 
 export const HOME_TAB_ID = "home";
-export const STORAGE_KEY_TABS = "silentx-tabs-v1";
-export const STORAGE_KEY_SETTINGS = "silentx-settings-v1";
-export const STORAGE_KEY_BOOKMARKS = "silentx-bookmarks-v1";
-export const STORAGE_KEY_HISTORY = "silentx-history-v1";
-export const STORAGE_KEY_DOWNLOADS = "silentx-downloads-v1";
-export const STORAGE_KEY_GROUPS = "silentx-groups-v1";
-export const STORAGE_KEY_WORKSPACES = "silentx-workspaces-v1";
-export const STORAGE_KEY_ACTIVE_WORKSPACE = "silentx-active-workspace-v1";
+export const STORAGE_KEY_TABS = "Aegis-tabs-v1";
+export const STORAGE_KEY_SETTINGS = "Aegis-settings-v1";
+export const STORAGE_KEY_BOOKMARKS = "Aegis-bookmarks-v1";
+export const STORAGE_KEY_HISTORY = "Aegis-history-v1";
+export const STORAGE_KEY_DOWNLOADS = "Aegis-downloads-v1";
+export const STORAGE_KEY_GROUPS = "Aegis-groups-v1";
+export const STORAGE_KEY_WORKSPACES = "Aegis-workspaces-v1";
+export const STORAGE_KEY_ACTIVE_WORKSPACE = "Aegis-active-workspace-v1";
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
-  searchEngine: "duckduckgo",
-  homeGreeting: "Sviatoslav",
+  searchEngine: "google",
+  homeGreeting: "Frost",
   startupBehavior: "previous",
   defaultDownloadsPath: "Downloads",
   adBlockingEnabled: false,
@@ -90,7 +90,7 @@ export function makeHomeTab(workspaceId = "personal"): Tab {
     kind: "home",
     title: "New tab",
     url: "",
-    label: `silentx-home-${workspaceId}`,
+    label: `Aegis-home-${workspaceId}`,
     history: [],
     index: -1,
     workspaceId,
@@ -104,7 +104,7 @@ export function makeWebTab(url: string, title?: string, group?: string, workspac
     kind: "web",
     title: title ?? titleFromUrl(url),
     url,
-    label: `silentx-tab-${id}`,
+    label: `Aegis-tab-${id}`,
     history: [url],
     index: 0,
     group,

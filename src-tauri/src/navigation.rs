@@ -71,19 +71,19 @@ impl NavigationState {
     let mut nav = self.lock();
     nav.current_urls.insert(label.to_string(), url.to_string());
     nav.pending_frontend_nav.insert(label.to_string(), Instant::now());
-    println!("[silentx-nav] ALLOW_REGISTER label={} url={}", label, redact_url(url));
+    println!("[Aegis-nav] ALLOW_REGISTER label={} url={}", label, redact_url(url));
   }
 }
 
-/// Build the `silentx-navigation` plugin that gates navigation for child
+/// Build the `Aegis-navigation` plugin that gates navigation for child
 /// webviews and forwards intercepted links to the main window.
-pub fn silentx_navigation_plugin(
+pub fn aegis_navigation_plugin(
   state: Arc<Mutex<NavigationMap>>,
   interception_script: &'static str,
 ) -> TauriPlugin<Wry> {
   let state_for_nav = NavigationState(state.clone());
 
-  PluginBuilder::<Wry, ()>::new("silentx-navigation")
+  PluginBuilder::<Wry, ()>::new("Aegis-navigation")
     .on_navigation(move |window, url| {
       let url_string = url.as_str().to_string();
       let label = window.label().to_string();
@@ -95,8 +95,8 @@ pub fn silentx_navigation_plugin(
 
       // Internal click/activity notification from child tab webviews
       if url_string.starts_with("sx-internal://user-click") {
-        if label.starts_with("silentx-tab-") {
-          let _ = window.emit_to("main", "silentx-tab-pointerdown", &label);
+        if label.starts_with("Aegis-tab-") {
+          let _ = window.emit_to("main", "Aegis-tab-pointerdown", &label);
         }
         return false;
       }
@@ -106,8 +106,8 @@ pub fn silentx_navigation_plugin(
         if let Ok(parsed) = url::Url::parse(&url_string) {
           for (k, v) in parsed.query_pairs() {
             if k == "url" && !v.is_empty() {
-              println!("[silentx-nav] EXPLICIT_OPEN_NEW_TAB label={} url={}", label, redact_url(&v));
-              let _ = window.emit_to("main", "silentx-open-link", &v.to_string());
+              println!("[Aegis-nav] EXPLICIT_OPEN_NEW_TAB label={} url={}", label, redact_url(&v));
+              let _ = window.emit_to("main", "Aegis-open-link", &v.to_string());
               break;
             }
           }
@@ -123,14 +123,14 @@ pub fn silentx_navigation_plugin(
           nav.current_urls.insert(label.clone(), url_string.clone());
           // Refresh timer so multi-hop redirect chains (e.g. notion.so -> www.notion.so -> notion.com) are allowed
           nav.pending_frontend_nav.insert(label.clone(), Instant::now());
-          println!("[silentx-nav] ALLOW_REDIRECT label={} url={}", label, redact_url(&url_string));
+          println!("[Aegis-nav] ALLOW_REDIRECT label={} url={}", label, redact_url(&url_string));
           return true;
         }
         nav.pending_frontend_nav.remove(&label);
       }
 
       if nav.current_urls.get(&label).is_some_and(|current| current == &url_string) {
-        println!("[silentx-nav] ALLOW label={} url={}", label, redact_url(&url_string));
+        println!("[Aegis-nav] ALLOW label={} url={}", label, redact_url(&url_string));
         return true;
       }
 
@@ -145,7 +145,7 @@ pub fn silentx_navigation_plugin(
         nav.current_urls.insert(label.clone(), url_string.clone());
         // Refresh timer for subsequent redirects
         nav.pending_frontend_nav.insert(label.clone(), Instant::now());
-        println!("[silentx-nav] ALLOW_SAME_HOST label={} url={}", label, redact_url(&url_string));
+        println!("[Aegis-nav] ALLOW_SAME_HOST label={} url={}", label, redact_url(&url_string));
         return true;
       }
 
@@ -157,10 +157,10 @@ pub fn silentx_navigation_plugin(
 
       if should_emit {
         nav.recent_emits.insert(url_string.clone(), Instant::now());
-        println!("[silentx-nav] INTERCEPT label={} url={}", label, redact_url(&url_string));
-        let _ = window.emit_to("main", "silentx-open-link", &url_string);
+        println!("[Aegis-nav] INTERCEPT label={} url={}", label, redact_url(&url_string));
+        let _ = window.emit_to("main", "Aegis-open-link", &url_string);
       } else {
-        println!("[silentx-nav] DEBOUNCE label={} url={}", label, redact_url(&url_string));
+        println!("[Aegis-nav] DEBOUNCE label={} url={}", label, redact_url(&url_string));
       }
 
       false
@@ -171,10 +171,10 @@ pub fn silentx_navigation_plugin(
 
       match payload.event() {
         PageLoadEvent::Started => {
-          println!("[silentx-nav] PAGE_LOAD_STARTED label={} url={}", label, redact_url(&url));
-          let _ = webview.emit_to("main", "silentx-page-load-started", &url);
+          println!("[Aegis-nav] PAGE_LOAD_STARTED label={} url={}", label, redact_url(&url));
+          let _ = webview.emit_to("main", "Aegis-page-load-started", &url);
 
-          if label.starts_with("silentx-tab-") || label.starts_with("silentx-panel-") {
+          if label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-") {
             let _ = webview.eval(interception_script);
           }
         }
@@ -182,13 +182,13 @@ pub fn silentx_navigation_plugin(
           let mut nav = state.lock().expect("navigation state poisoned");
           nav.current_urls.insert(label.clone(), url.clone());
           nav.recent_emits.remove(&url);
-          println!("[silentx-nav] PAGE_LOADED label={} url={}", label, redact_url(&url));
-          let _ = webview.emit_to("main", "silentx-page-load-finished", serde_json::json!({
+          println!("[Aegis-nav] PAGE_LOADED label={} url={}", label, redact_url(&url));
+          let _ = webview.emit_to("main", "Aegis-page-load-finished", serde_json::json!({
             "label": label,
             "url": url,
           }));
 
-          if label.starts_with("silentx-tab-") || label.starts_with("silentx-panel-") {
+          if label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-") {
             let _ = webview.eval(interception_script);
           }
         }

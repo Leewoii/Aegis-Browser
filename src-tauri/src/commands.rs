@@ -30,7 +30,7 @@ pub fn navigate_webview<R: Runtime>(
   url: String,
 ) -> Result<(), String> {
   state.approve(&label, &url);
-  println!("[silentx-nav] NAVIGATE_PENDING label={} url={}", label, url);
+  println!("[Aegis-nav] NAVIGATE_PENDING label={} url={}", label, url);
 
   let parsed = url::Url::parse(&url).map_err(|e| format!("Invalid URL '{}': {}", url, e))?;
 

@@ -247,7 +247,7 @@ This is the main persistence service for the frontend.
 It uses:
 
 - `@tauri-apps/plugin-sql`
-- SQLite database `sqlite:silentx.db`
+- SQLite database `sqlite:Aegis.db`
 - migration helpers
 - optional migration from legacy `localStorage`
 - Tauri commands for secure secrets
@@ -431,7 +431,7 @@ This prevents native webviews from visually covering HTML overlays.
 
 ### `src-tauri/src/navigation.rs`
 
-This file provides the `silentx-navigation` Tauri plugin.
+This file provides the `Aegis-navigation` Tauri plugin.
 
 Main responsibilities:
 
@@ -616,7 +616,7 @@ Adds structured storage for:
 Configured in `src-tauri/tauri.conf.json`:
 
 - Product name: `Aegis Browser`
-- Identifier: `com.silentx.browser.v2`
+- Identifier: `com.Aegis.browser.v2`
 - Windows:
   - width 1440
   - height 920
@@ -698,10 +698,10 @@ Whenever the app opens or navigates to a URL:
 
 The frontend listens for Rust-emitted events:
 
-- `silentx-open-link`
-- `silentx-tab-pointerdown`
-- `silentx-page-load-started`
-- `silentx-page-load-finished`
+- `Aegis-open-link`
+- `Aegis-tab-pointerdown`
+- `Aegis-page-load-started`
+- `Aegis-page-load-finished`
 
 These drive:
 
