@@ -864,7 +864,7 @@ export default function App() {
   useEffect(() => {
     if (isClosingRef.current) return;
     void syncActive();
-  }, [activeTabId, activeTab.kind, activeTab.url, activePanel, isSidebarPinned, isPanelPinned, panelWidth, activeWorkspaceId]);
+  }, [activeTabId, activeTab.kind, activeTab.url, activeWorkspaceId]);
 
   useEffect(() => {
     if (isClosingRef.current) return;
@@ -877,24 +877,25 @@ export default function App() {
     };
   }, [scheduleSyncActive]);
 
-  // Keep native webview bounds in lockstep with CSS 220ms layout transition (sidebar pin, panel open/close, maximize)
-  // isSidebarHovered is intentionally excluded — hover is an overlay (no viewport resize)
+  // Keep native webview bounds in lockstep with CSS 220ms layout transition (sidebar hover/pin, panel, maximize)
   useEffect(() => {
     if (isClosingRef.current) return;
     let raf: number | null = null;
     const start = performance.now();
-    const duration = 260;
+    const duration = 220;
     const tick = (now: number) => {
-      scheduleSyncActive();
+      void syncActive();
       if (now - start < duration) {
         raf = requestAnimationFrame(tick);
+      } else {
+        void syncActive();
       }
     };
     raf = requestAnimationFrame(tick);
     return () => {
       if (raf !== null) cancelAnimationFrame(raf);
     };
-  }, [isSidebarPinned, activePanel, isPanelPinned, panelWidth, isWindowMaximized, scheduleSyncActive]);
+  }, [isSidebarPinned, isSidebarHovered, activePanel, isPanelPinned, panelWidth, isWindowMaximized, syncActive]);
 
   // Hide webview when omnibox dropdown is visible or when a modal is open
   useEffect(() => {
@@ -1725,9 +1726,9 @@ export default function App() {
   const canGoForward = activeTab.kind === "web" && activeTab.index < activeTab.history.length - 1;
   const panelIsWebApp = activePanel !== null && isWebAppPanel(activePanel);
 
-  // ── Smooth sidebar / panel geometry (single source of truth for CSS) ──
+  // ── Smooth sidebar / panel geometry — hover now pushes viewport+chrome (no overlay gap) ──
   const sidebarVisualWidth = isSidebarPinned || isSidebarHovered ? 260 : 56;
-  const mainOffset = isSidebarPinned ? 260 : 56;
+  const mainOffset = isSidebarPinned || isSidebarHovered ? 260 : 56;
   const panelVisibleWidth = activePanel ? panelWidth : 0;
   const panelPushWidth = isPanelPinned && activePanel ? panelWidth : 0;
 
@@ -1735,7 +1736,7 @@ export default function App() {
 
   return (
     <div
-      className={`app-container ${isWindowMaximized ? "is-maximized" : ""}`}
+      className={`app-container ${isWindowMaximized ? "is-maximized" : ""} ${isResizing ? "is-resizing" : ""}`}
       style={
         {
           "--sidebar-visual-w": `${sidebarVisualWidth}px`,

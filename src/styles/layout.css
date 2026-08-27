@@ -77,6 +77,13 @@ html.is-maximized .window-resize-handle,
   pointer-events: none;
 }
 
+/* ── During live drag (panel resize) disable transitions for direct follow ─── */
+.app-container.is-resizing .sidebar-shell,
+.app-container.is-resizing .side-panel,
+.app-container.is-resizing .main-content-column {
+  transition: none !important;
+}
+
 /* ── Frameless window resize handles ───────────────────────────────── */
 .window-resize-handle {
   position: absolute;
@@ -160,9 +167,12 @@ html.is-maximized .window-resize-handle,
   min-width: 0;
   overflow: hidden;
   z-index: 0;
-  /* keep chrome + viewport in lockstep with sidebar/panel */
-  transition: left 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
-  will-change: left;
+  /* keep chrome + viewport in lockstep with sidebar/panel — same keyframe as sidebar */
+  transition:
+    left 220ms cubic-bezier(0.2, 0.9, 0.3, 1),
+    width 220ms cubic-bezier(0.2, 0.9, 0.3, 1),
+    transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: left, width, transform;
   transform: translateZ(0);
   backface-visibility: hidden;
 }
@@ -179,6 +189,10 @@ html.is-maximized .window-resize-handle,
   -webkit-backdrop-filter: blur(28px);
   border-bottom: none;
   overflow: hidden;
+  /* follow main's left/width — same 220ms keyframe */
+  transition: width 220ms cubic-bezier(0.2, 0.9, 0.3, 1), transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: width, transform;
+  transform: translateZ(0);
 }
 
 /* Full window-width bottom baseline line across the entire header bar */
@@ -894,6 +908,9 @@ html.is-maximized .window-resize-handle,
   min-height: 0;
   background: var(--bg-content);
   position: relative;
+  transition: width 220ms cubic-bezier(0.2, 0.9, 0.3, 1), transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: width, transform;
+  transform: translateZ(0);
 }
 
 /* ── Sub-Navigation Toolbar ───────────────────────────────────────── */
@@ -1022,6 +1039,9 @@ html.is-maximized .window-resize-handle,
   min-height: 0;
   overflow: hidden;
   background: radial-gradient(80% 80% at 50% 30%, rgba(110, 155, 255, 0.025) 0%, transparent 80%);
+  transition: width 220ms cubic-bezier(0.2, 0.9, 0.3, 1), transform 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: width, transform;
+  transform: translateZ(0);
 }
 
 .loading-bar {
