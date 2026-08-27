@@ -11,6 +11,20 @@ interface DownloadsPanelProps {
   onDelete?: (id: string) => void;
 }
 
+function formatEta(totalBytes: number, receivedBytes: number, speed?: number): string | null {
+  if (!speed || speed <= 0 || totalBytes <= receivedBytes) return null;
+  const remainingSeconds = Math.round((totalBytes - receivedBytes) / speed);
+  if (remainingSeconds < 60) return `${remainingSeconds}s left`;
+  if (remainingSeconds < 3600) {
+    const mins = Math.floor(remainingSeconds / 60);
+    const secs = remainingSeconds % 60;
+    return `${mins}m ${secs}s left`;
+  }
+  const hours = Math.floor(remainingSeconds / 3600);
+  const mins = Math.floor((remainingSeconds % 3600) / 60);
+  return `${hours}h ${mins}m left`;
+}
+
 export function DownloadsPanel({
   downloads,
   onPause,
@@ -65,6 +79,10 @@ export function DownloadsPanel({
         {downloads.map((dl) => {
           const state = dl.state || (dl.completed ? "completed" : "in_progress");
           const pct = dl.totalBytes > 0 ? (dl.receivedBytes / dl.totalBytes) * 100 : 0;
+          const eta = state === "in_progress" ? formatEta(dl.totalBytes, dl.receivedBytes, dl.speed) : null;
+          const speedStr =
+            state === "in_progress" && dl.speed && dl.speed > 0 ? `${formatBytes(dl.speed)}/s` : null;
+
           return (
             <div key={dl.id} className="download-row" style={{ padding: "10px 12px" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
@@ -86,9 +104,18 @@ export function DownloadsPanel({
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                 <div className="download-status" style={{ fontSize: 11 }}>
-                  {state === "completed"
-                    ? `${formatBytes(dl.totalBytes)}`
-                    : `${pct.toFixed(0)}% · ${formatBytes(dl.receivedBytes)} of ${formatBytes(dl.totalBytes)}`}
+                  {state === "completed" ? (
+                    `${formatBytes(dl.totalBytes)}`
+                  ) : state === "in_progress" ? (
+                    <span>
+                      {pct > 0 ? `${pct.toFixed(0)}% · ` : ""}
+                      {formatBytes(dl.receivedBytes)} of {dl.totalBytes > 0 ? formatBytes(dl.totalBytes) : "..."}
+                      {speedStr && <strong style={{ color: "var(--accent-a, #6e9bff)", marginLeft: 6 }}>{speedStr}</strong>}
+                      {eta && <span style={{ opacity: 0.75, marginLeft: 6 }}>({eta})</span>}
+                    </span>
+                  ) : (
+                    `${pct.toFixed(0)}% · ${formatBytes(dl.receivedBytes)} of ${formatBytes(dl.totalBytes)}`
+                  )}
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>

@@ -47,6 +47,8 @@ interface SidebarProps {
   isConsoleOpen: boolean;
   onUpdatesClick: () => void;
   isUpdatesOpen: boolean;
+  onSettingsClick: () => void;
+  isSettingsOpen: boolean;
   isHovered?: boolean;
   onHoverChange?: (hovered: boolean) => void;
   onTransitionEnd?: () => void;
@@ -69,6 +71,8 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
     isConsoleOpen,
     onUpdatesClick,
     isUpdatesOpen,
+    onSettingsClick,
+    isSettingsOpen,
     isHovered: isHoveredProp,
     onHoverChange,
     onTransitionEnd,
@@ -402,8 +406,8 @@ export const Sidebar = forwardRef<HTMLElement, SidebarProps>(function Sidebar(
           </button>
 
           <button
-            className={`sidebar-item ${activePanel === "settings" ? "active" : ""}`}
-            onClick={() => onTogglePanel("settings")}
+            className={`sidebar-item ${isSettingsOpen ? "active" : ""}`}
+            onClick={onSettingsClick}
             title="Settings"
           >
             <span className="sidebar-icon">

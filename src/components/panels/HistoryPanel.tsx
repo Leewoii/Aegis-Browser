@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { HistoryEntry } from "../../types";
 import { formatDayGroup, formatDateTime } from "../../utils/format";
+import { Favicon } from "../Favicon";
 
 interface HistoryPanelProps {
   entries: HistoryEntry[];
@@ -64,7 +65,6 @@ export function HistoryPanel({ entries, onClear, onOpen }: HistoryPanelProps) {
               const showDomainRow = !isTitleGeneric && domain.toLowerCase() !== displayTitle.toLowerCase();
               const decodedUrl = displayUrl(entry.url);
               const dateTime = formatDateTime(entry.visitedAt);
-              const initial = domain.charAt(0).toUpperCase() || "•";
               return (
                 <button
                   key={`${entry.url}-${entry.visitedAt}-${idx}`}
@@ -73,7 +73,7 @@ export function HistoryPanel({ entries, onClear, onOpen }: HistoryPanelProps) {
                   title={`${displayTitle}\n${decodedUrl}\n${dateTime}`}
                 >
                   <div className="history-icon" aria-hidden>
-                    {initial}
+                    <Favicon url={entry.url} size={16} />
                   </div>
                   <div className="history-entry-main">
                     <div className="history-title-row">

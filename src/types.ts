@@ -1,6 +1,6 @@
 import { WEB_APP_PANELS } from "./constants/webApps";
 
-export type TabKind = "home" | "web" | "updates" | "console";
+export type TabKind = "home" | "web" | "updates" | "console" | "settings";
 
 export type SplitViewState = {
   leftTabId: string;
@@ -68,6 +68,7 @@ export type DownloadEntry = {
   receivedBytes: number;
   completed: boolean;
   state?: DownloadState;
+  speed?: number; // Bytes per second
   startedAt?: number;
   completedAt?: number;
   createdAt: number;

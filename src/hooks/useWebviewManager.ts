@@ -70,6 +70,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
   } = options;
 
   const tabWebviewsRef = useRef<Record<string, Webview>>({});
+  const lastLoadedUrlRef = useRef<Record<string, string>>({});
   const panelWebviewRef = useRef<Webview | null>(null);
   const panelWebviewPanelRef = useRef<PanelId | null>(null);
   const pendingRafRef = useRef<number | null>(null);
@@ -83,6 +84,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     const wv = tabWebviewsRef.current[tabId];
     if (!wv) return;
     delete tabWebviewsRef.current[tabId];
+    delete lastLoadedUrlRef.current[tabId];
     try {
       // #region DEBUG
       await debugLog(`[DEBUG H3] destroyTabWebview start tabId=${tabId}`);
@@ -127,6 +129,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       });
       await waitForWebviewCreated(view);
       tabWebviewsRef.current[tab.id] = view;
+      lastLoadedUrlRef.current[tab.id] = tab.url;
       // #region DEBUG
       await debugLog(`[DEBUG H3] createTabWebview end tabId=${tab.id} label=${tab.label}`);
       // #endregion DEBUG
@@ -281,6 +284,14 @@ export function useWebviewManager(options: WebviewManagerOptions) {
               await wv.setPosition(new LogicalPosition(l, t));
               await wv.setSize(new LogicalSize(w, h));
               await wv.show();
+              // Check if URL changed and navigate immediately
+              const prevUrl = lastLoadedUrlRef.current[paneTab.id];
+              if (paneTab.url && prevUrl !== paneTab.url) {
+                lastLoadedUrlRef.current[paneTab.id] = paneTab.url;
+                void invoke("allow_navigation", { label: paneTab.label, url: paneTab.url })
+                  .then(() => invoke("navigate_webview", { label: paneTab.label, url: paneTab.url }))
+                  .catch((err) => console.error("Split navigation error:", err));
+              }
             } catch (err) {
               console.error("Failed to reposition split webview:", err);
             }
@@ -328,6 +339,14 @@ export function useWebviewManager(options: WebviewManagerOptions) {
           await existingWv.setPosition(new LogicalPosition(left, top));
           await existingWv.setSize(new LogicalSize(width, height));
           await existingWv.show();
+          // Check if URL changed and navigate immediately
+          const prevUrl = lastLoadedUrlRef.current[tab.id];
+          if (tab.url && prevUrl !== tab.url) {
+            lastLoadedUrlRef.current[tab.id] = tab.url;
+            void invoke("allow_navigation", { label: tab.label, url: tab.url })
+              .then(() => invoke("navigate_webview", { label: tab.label, url: tab.url }))
+              .catch((err) => console.error("Tab navigation error:", err));
+          }
         } catch (err) {
           console.error("Failed to reposition webview:", err);
         }

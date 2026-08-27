@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { Globe, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type { Bookmark } from "../../types";
+import { Favicon } from "../Favicon";
 
 interface BookmarksPanelProps {
   bookmarks: Bookmark[];
@@ -68,7 +69,7 @@ export function BookmarksPanel({ bookmarks, onAdd, onRemove, onOpen }: Bookmarks
                 onOpen(bm);
               }}
             >
-              <Globe size={14} />
+              <Favicon url={bm.url} size={14} />
               <span className="list-item-title">{bm.title}</span>
             </a>
             <button

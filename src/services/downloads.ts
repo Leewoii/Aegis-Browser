@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { DownloadEntry } from "../types";
 import {
   upsertDownload,
@@ -36,6 +38,7 @@ function filenameFromUrl(url: string): string {
 
 class DownloadManager {
   private activeTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
+  private speedTracking: Map<string, { time: number; bytes: number }> = new Map();
   private listeners: Set<DownloadListener> = new Set();
   private downloads: DownloadEntry[] = [];
   private tauriListenersReady = false;
@@ -67,57 +70,75 @@ class DownloadManager {
   private ensureTauriListeners() {
     if (this.tauriListenersReady || !isTauri()) return;
     this.tauriListenersReady = true;
-    // Dynamic import to avoid bundling issues in web preview
-    void import("@tauri-apps/api/event").then(({ listen }) => {
-      void listen<{ id: string; filename: string; url: string; received: number; total: number }>(
-        "download-progress",
-        (e) => {
-          const { id, received, total } = e.payload;
-          const target = this.downloads.find((d) => d.id === id);
-          if (!target) return;
-          target.receivedBytes = received;
-          if (total > 0) target.totalBytes = total;
-          target.state = "in_progress";
-          target.completed = false;
-          this.notify();
-          // Persist periodically (throttle is handled by infrequent emits)
-          void upsertDownload({ ...target });
-        },
-      );
-      void listen<{ id: string; filename: string; url: string; path: string; total: number }>(
-        "download-finished",
-        (e) => {
-          const { id, total, path: dest } = e.payload;
-          const target = this.downloads.find((d) => d.id === id);
-          if (!target) return;
-          target.receivedBytes = total;
-          target.totalBytes = total;
-          target.state = "completed";
-          target.completed = true;
-          target.completedAt = Date.now();
-          target.destination = dest;
-          this.notify();
-          void upsertDownload({ ...target });
-        },
-      );
-      void listen<{ id: string; error: string }>("download-error", (e) => {
-        const { id, error } = e.payload;
+
+    void listen<{ id: string; filename: string; url: string; received: number; total: number }>(
+      "download-progress",
+      (e) => {
+        const { id, received, total } = e.payload;
         const target = this.downloads.find((d) => d.id === id);
         if (!target) return;
-        console.error("Download error", id, error);
-        target.state = "failed";
+        target.receivedBytes = received;
+        if (total > 0) target.totalBytes = total;
+        target.state = "in_progress";
         target.completed = false;
+
+        const now = Date.now();
+        const prev = this.speedTracking.get(id);
+        if (prev) {
+          const elapsedSec = (now - prev.time) / 1000;
+          if (elapsedSec >= 0.25) {
+            const deltaBytes = Math.max(0, received - prev.bytes);
+            target.speed = Math.round(deltaBytes / elapsedSec);
+            this.speedTracking.set(id, { time: now, bytes: received });
+          }
+        } else {
+          this.speedTracking.set(id, { time: now, bytes: received });
+          target.speed = 0;
+        }
+
         this.notify();
         void upsertDownload({ ...target });
-      });
-      void listen<{ id: string }>("download-cancelled", (e) => {
-        const { id } = e.payload;
+      },
+    );
+    void listen<{ id: string; filename: string; url: string; path: string; total: number }>(
+      "download-finished",
+      (e) => {
+        const { id, total, path: dest } = e.payload;
         const target = this.downloads.find((d) => d.id === id);
         if (!target) return;
-        target.state = "cancelled";
+        target.receivedBytes = total;
+        target.totalBytes = total;
+        target.state = "completed";
+        target.completed = true;
+        target.speed = 0;
+        this.speedTracking.delete(id);
+        target.completedAt = Date.now();
+        target.destination = dest;
         this.notify();
         void upsertDownload({ ...target });
-      });
+      },
+    );
+    void listen<{ id: string; error: string }>("download-error", (e) => {
+      const { id, error } = e.payload;
+      const target = this.downloads.find((d) => d.id === id);
+      if (!target) return;
+      console.error("Download error", id, error);
+      target.state = "failed";
+      target.completed = false;
+      target.speed = 0;
+      this.speedTracking.delete(id);
+      this.notify();
+      void upsertDownload({ ...target });
+    });
+    void listen<{ id: string }>("download-cancelled", (e) => {
+      const { id } = e.payload;
+      const target = this.downloads.find((d) => d.id === id);
+      if (!target) return;
+      target.state = "cancelled";
+      target.speed = 0;
+      this.speedTracking.delete(id);
+      this.notify();
+      void upsertDownload({ ...target });
     });
   }
 
@@ -140,28 +161,30 @@ class DownloadManager {
 
     if (isTauri()) {
       // Real download via Rust
-      void import("@tauri-apps/api/core").then(({ invoke }) => {
-        invoke<string>("start_download", { id: target.id, url: target.url })
-          .then((dest) => {
-            target.destination = dest;
-            void upsertDownload({ ...target });
-          })
-          .catch((err) => {
-            const msg = String(err);
-            if (msg.toLowerCase().includes("cancelled")) {
-              target.state = "cancelled";
-              target.completed = false;
-              void cancelDownloadInDb(target.id);
-              this.notify();
-              return;
-            }
-            console.error("start_download failed", err);
-            target.state = "failed";
+      invoke<string>("start_download", { id: target.id, url: target.url })
+        .then((dest) => {
+          target.destination = dest;
+          void upsertDownload({ ...target });
+        })
+        .catch((err) => {
+          const msg = String(err);
+          if (msg.toLowerCase().includes("cancelled")) {
+            target.state = "cancelled";
             target.completed = false;
+            target.speed = 0;
+            this.speedTracking.delete(target.id);
+            void cancelDownloadInDb(target.id);
             this.notify();
-            void upsertDownload({ ...target });
-          });
-      });
+            return;
+          }
+          console.error("start_download failed", err);
+          target.state = "failed";
+          target.completed = false;
+          target.speed = 0;
+          this.speedTracking.delete(target.id);
+          this.notify();
+          void upsertDownload({ ...target });
+        });
       return;
     }
 
@@ -180,17 +203,31 @@ class DownloadManager {
       if (!current || current.state !== "in_progress") {
         clearInterval(interval);
         this.activeTimers.delete(id);
+        this.speedTracking.delete(id);
         return;
       }
+
+      const now = Date.now();
+      const prev = this.speedTracking.get(id);
+      if (prev) {
+        const elapsedSec = (now - prev.time) / 1000;
+        if (elapsedSec > 0) {
+          const deltaBytes = Math.max(0, current.receivedBytes + chunkSize - prev.bytes);
+          current.speed = Math.round(deltaBytes / elapsedSec);
+        }
+      }
+      this.speedTracking.set(id, { time: now, bytes: current.receivedBytes + chunkSize });
 
       current.receivedBytes = Math.min(current.receivedBytes + chunkSize, current.totalBytes);
 
       if (current.receivedBytes >= current.totalBytes && current.totalBytes > 0) {
         current.state = "completed";
         current.completed = true;
+        current.speed = 0;
         current.completedAt = Date.now();
         clearInterval(interval);
         this.activeTimers.delete(id);
+        this.speedTracking.delete(id);
         void upsertDownload(current);
         this.notify();
       } else {
@@ -208,9 +245,11 @@ class DownloadManager {
       clearInterval(timer);
       this.activeTimers.delete(id);
     }
+    this.speedTracking.delete(id);
     const target = this.downloads.find((d) => d.id === id);
     if (target) {
       target.state = "paused";
+      target.speed = 0;
       void pauseDownloadInDb(id);
       this.notify();
     }
@@ -222,14 +261,14 @@ class DownloadManager {
       clearInterval(timer);
       this.activeTimers.delete(id);
     }
+    this.speedTracking.delete(id);
     if (isTauri()) {
-      void import("@tauri-apps/api/core").then(({ invoke }) => {
-        void invoke("cancel_download", { id }).catch(() => undefined);
-      });
+      void invoke("cancel_download", { id }).catch(() => undefined);
     }
     const target = this.downloads.find((d) => d.id === id);
     if (target) {
       target.state = "cancelled";
+      target.speed = 0;
       void cancelDownloadInDb(id);
       this.notify();
     }
@@ -241,6 +280,7 @@ class DownloadManager {
       target.receivedBytes = 0;
       target.state = "in_progress";
       target.completed = false;
+      target.speed = 0;
       void retryDownloadInDb(id);
       this.startOrResume(id);
     }
@@ -252,10 +292,9 @@ class DownloadManager {
       clearInterval(timer);
       this.activeTimers.delete(id);
     }
+    this.speedTracking.delete(id);
     if (isTauri()) {
-      void import("@tauri-apps/api/core").then(({ invoke }) => {
-        void invoke("cancel_download", { id }).catch(() => undefined);
-      });
+      void invoke("cancel_download", { id }).catch(() => undefined);
     }
     this.downloads = this.downloads.filter((d) => d.id !== id);
     void deleteDownloadInDb(id);
@@ -285,9 +324,7 @@ class DownloadManager {
     if (isTauri()) {
       for (const dl of this.downloads) {
         if (dl.state === "in_progress") {
-          void import("@tauri-apps/api/core").then(({ invoke }) => {
-            void invoke("cancel_download", { id: dl.id }).catch(() => undefined);
-          });
+          void invoke("cancel_download", { id: dl.id }).catch(() => undefined);
         }
       }
     }

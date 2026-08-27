@@ -1,31 +1,125 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Globe, Mic, ScanSearch, Search } from "lucide-react";
-import type { HistoryEntry, Bookmark } from "../types";
+import { Bookmark as BookmarkIcon, Clock3, Globe, Mic, ScanSearch, Search } from "lucide-react";
+import type { HistoryEntry, Bookmark as BookmarkEntry } from "../types";
+import { normalizeUrl, titleFromUrl } from "../utils/browser";
 
 export interface Suggestion {
   title: string;
   url: string;
+  displayUrl: string;
+  sourceLabel: string;
+  detail: string;
 }
 
-export function useSuggestions(query: string, history: HistoryEntry[], bookmarks: Bookmark[]): Suggestion[] {
+export function useSuggestions(query: string, history: HistoryEntry[], bookmarks: BookmarkEntry[]): Suggestion[] {
   return useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    const fromHistory: Suggestion[] = (history || [])
-      .filter((h) => h.title.toLowerCase().includes(q) || h.url.toLowerCase().includes(q))
-      .map((h) => ({ title: h.title, url: h.url }));
-    const fromBookmarks: Suggestion[] = (bookmarks || [])
-      .filter((b) => b.title.toLowerCase().includes(q) || b.url.toLowerCase().includes(q))
-      .map((b) => ({ title: b.title, url: b.url }));
-    const merged = [...fromBookmarks, ...fromHistory];
-    const seen = new Set<string>();
-    return merged
-      .filter((item) => {
-        if (seen.has(item.url)) return false;
-        seen.add(item.url);
-        return true;
+
+    type SuggestionSource = "bookmark" | "history";
+    type SuggestionAggregate = {
+      url: string;
+      title: string;
+      displayUrl: string;
+      sourceSet: Set<SuggestionSource>;
+      visitedAt?: number;
+      createdAt?: number;
+      visitCount?: number;
+    };
+
+    const toDisplayUrl = (value: string): string => {
+      try {
+        const parsed = new URL(value);
+        const host = parsed.hostname.replace(/^www\./, "");
+        const path = parsed.pathname === "/" ? "" : parsed.pathname;
+        const tail = `${path}${parsed.search}${parsed.hash}`;
+        return `${host}${tail}` || value;
+      } catch {
+        return value;
+      }
+    };
+
+    const scoreTitle = (value: string): number => {
+      const lower = value.toLowerCase();
+      if (!lower || lower === "new tab") return 0;
+      return Math.min(100, lower.length);
+    };
+
+    const aggregates = new Map<string, SuggestionAggregate>();
+
+    const ensureAggregate = (url: string): SuggestionAggregate => {
+      const key = normalizeUrl(url);
+      const existing = aggregates.get(key);
+      if (existing) return existing;
+      const created: SuggestionAggregate = {
+        url,
+        title: titleFromUrl(url),
+        displayUrl: toDisplayUrl(url),
+        sourceSet: new Set(),
+      };
+      aggregates.set(key, created);
+      return created;
+    };
+
+    const matches = (title: string, url: string): boolean => {
+      const haystackTitle = title.toLowerCase();
+      const haystackUrl = url.toLowerCase();
+      return haystackTitle.includes(q) || haystackUrl.includes(q);
+    };
+
+    for (const item of bookmarks || []) {
+      if (!matches(item.title, item.url)) continue;
+      const aggregate = ensureAggregate(item.url);
+      aggregate.sourceSet.add("bookmark");
+      aggregate.createdAt = Math.max(aggregate.createdAt ?? 0, item.createdAt ?? 0) || aggregate.createdAt;
+      if (scoreTitle(item.title) > scoreTitle(aggregate.title)) {
+        aggregate.title = item.title;
+      }
+    }
+
+    for (const item of history || []) {
+      if (!matches(item.title, item.url)) continue;
+      const aggregate = ensureAggregate(item.url);
+      aggregate.sourceSet.add("history");
+      aggregate.visitedAt = Math.max(aggregate.visitedAt ?? 0, item.visitedAt ?? 0) || aggregate.visitedAt;
+      aggregate.visitCount = (aggregate.visitCount ?? 0) + 1;
+      if (scoreTitle(item.title) > scoreTitle(aggregate.title)) {
+        aggregate.title = item.title;
+      }
+    }
+
+    const historyRank = (item: SuggestionAggregate): number => item.visitedAt ?? 0;
+    const bookmarkRank = (item: SuggestionAggregate): number => item.createdAt ?? 0;
+
+    return [...aggregates.values()]
+      .sort((a, b) => {
+        const aScore = Math.max(historyRank(a), bookmarkRank(a));
+        const bScore = Math.max(historyRank(b), bookmarkRank(b));
+        if (bScore !== aScore) return bScore - aScore;
+        return a.title.localeCompare(b.title);
       })
-      .slice(0, 6);
+      .slice(0, 6)
+      .map((item) => {
+        const sources = [...item.sourceSet];
+        const sourceLabel =
+          sources.length === 2 ? "Bookmark + History" : sources[0] === "bookmark" ? "Bookmark" : "History";
+        const detailParts: string[] = [];
+        if (item.visitCount && item.visitCount > 1) detailParts.push(`${item.visitCount} visits`);
+        if (item.visitedAt) {
+          const minutes = Math.max(1, Math.round((Date.now() - item.visitedAt) / 60000));
+          detailParts.push(minutes < 60 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago`);
+        } else if (item.createdAt) {
+          const minutes = Math.max(1, Math.round((Date.now() - item.createdAt) / 60000));
+          detailParts.push(minutes < 60 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago`);
+        }
+        return {
+          title: item.title,
+          url: item.url,
+          displayUrl: item.displayUrl,
+          sourceLabel,
+          detail: detailParts.join(" · "),
+        };
+      });
   }, [query, history, bookmarks]);
 }
 
@@ -167,8 +261,17 @@ export function Omnibox({
               }}
             >
               <Globe size={12} />
-              <span className="suggestion-title">{s.title}</span>
-              <span className="suggestion-url">{s.url}</span>
+              <div className="suggestion-main">
+                <span className="suggestion-title">{s.title}</span>
+                <span className="suggestion-meta">
+                  <span className="suggestion-source">
+                    {s.sourceLabel === "Bookmark" ? <BookmarkIcon size={10} /> : <Clock3 size={10} />}
+                    <span>{s.sourceLabel}</span>
+                  </span>
+                  {s.detail && <span className="suggestion-detail">{s.detail}</span>}
+                </span>
+              </div>
+              <span className="suggestion-url">{s.displayUrl}</span>
             </button>
           ))}
         </div>

@@ -14,7 +14,7 @@ pub fn run() {
     // Enable Widevine DRM, MediaFoundation hardware decoding, and autoplay for video streaming (Netflix, Crunchyroll, etc.)
     std::env::set_var(
       "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-      "--enable-features=WidevineCdm,MediaFoundationPlayback,HardwareMediaKeyHandling,EncryptedMedia --autoplay-policy=no-user-gesture-required --disable-features=TrackingPrevention",
+      "--enable-features=WidevineCdm,MediaFoundationPlayback,HardwareMediaKeyHandling,EncryptedMedia --autoplay-policy=no-user-gesture-required --disable-features=TrackingPrevention --disable-gpu-compositing",
     );
   }
 

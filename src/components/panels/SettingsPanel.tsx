@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, EyeOff, Trash2, Plus, Search, Lock, Shield, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Trash2, Plus, Search, Shield, Loader2, Settings2, History, Download } from "lucide-react";
 import type { SearchEngine, Settings, ThemeName } from "../../types";
 import { retrieveSecureSecret, storeSecureSecret } from "../../services/storage";
 
@@ -143,331 +143,247 @@ export function SettingsPanel({
   );
 
   return (
-    <div className="list-panel" style={{ paddingBottom: "24px" }}>
-      <div className="list-panel-header">
-        <h3>Settings</h3>
-      </div>
-
-      {/* ── Preferences Section ── */}
-      <div className="settings-section" style={{ padding: "0 12px", marginBottom: "20px" }}>
-        <h4 style={{ margin: "16px 0 10px 0", color: "#a78bfa", fontSize: "13px" }}>Preferences</h4>
-        
-        <div className="settings-option" style={{ marginBottom: "12px" }}>
-          <label>Theme</label>
-          <select
-            value={settings.theme}
-            onChange={(e) => onChange({ theme: e.target.value as ThemeName })}
-          >
-            {THEMES.map((t) => (
-              <option key={t.value} value={t.value}>
-                {t.label}
-              </option>
-            ))}
-          </select>
+    <section className="settings-screen">
+      <div className="settings-card settings-hero-card">
+        <div className="settings-hero-icon">
+          <Settings2 size={27} strokeWidth={1.7} />
         </div>
-
-        <div className="settings-option" style={{ marginBottom: "12px" }}>
-          <label>Search Engine</label>
-          <select
-            value={settings.searchEngine}
-            onChange={(e) => onChange({ searchEngine: e.target.value as SearchEngine })}
-          >
-            {ENGINES.map((engine) => (
-              <option key={engine.value} value={engine.value}>
-                {engine.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="settings-option" style={{ marginBottom: "12px" }}>
-          <label>Home Greeting</label>
-          <input
-            className="settings-text-input"
-            value={settings.homeGreeting}
-            placeholder="Your name or a greeting"
-            onChange={(e) => onChange({ homeGreeting: e.target.value })}
-          />
-        </div>
-
-        <div className="settings-option" style={{ marginBottom: "12px" }}>
-          <label>Startup Behavior</label>
-          <select
-            value={settings.startupBehavior || "previous"}
-            onChange={(e) => onChange({ startupBehavior: e.target.value as Settings["startupBehavior"] })}
-          >
-            <option value="previous">Restore last session (Tabs)</option>
-            <option value="home">Open fresh New Tab page</option>
-          </select>
-        </div>
-
-        <div className="settings-option" style={{ marginBottom: "12px" }}>
-          <label>Downloads Folder</label>
-          <input
-            className="settings-text-input"
-            value={settings.defaultDownloadsPath || "Downloads"}
-            placeholder="Downloads folder path"
-            onChange={(e) => onChange({ defaultDownloadsPath: e.target.value })}
-          />
-        </div>
-
-        <div className="settings-option" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-          <label htmlFor="ad-block-toggle" style={{ cursor: "pointer" }}>Ad & Tracker Shield</label>
-          <input
-            id="ad-block-toggle"
-            type="checkbox"
-            style={{ width: "16px", height: "16px", cursor: "pointer", accentColor: "#a78bfa" }}
-            checked={!!settings.adBlockingEnabled}
-            onChange={(e) => onChange({ adBlockingEnabled: e.target.checked })}
-          />
+        <div>
+          <p className="settings-eyebrow">Browser controls</p>
+          <h1>Settings</h1>
+          <p className="settings-copy">
+            Adjust appearance, startup behavior, privacy tools, and secure logins from one scrollable panel.
+          </p>
         </div>
       </div>
 
-      <hr style={{ border: "0", borderTop: "1px solid #232736", margin: "16px 0" }} />
-
-      {/* ── Privacy & Browsing Data Section ── */}
-      <div className="settings-section" style={{ padding: "0 12px", marginBottom: "20px" }}>
-        <h4 style={{ margin: "0 0 10px 0", color: "#a78bfa", fontSize: "13px" }}>Privacy & Browsing Data</h4>
-        
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          <button
-            onClick={handleClearWorkspaceProfile}
-            disabled={clearingProfile}
-            className="panel-action-btn"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
-              background: "#3b202e",
-              color: "#f43f5e",
-              border: "1px solid #5a1e2f",
-              borderRadius: "6px",
-              padding: "8px",
-              fontSize: "12px",
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            {clearingProfile ? (
-              <>
-                <Loader2 className="animate-spin" size={13} />
-                Wiping data...
-              </>
-            ) : (
-              <>
-                <Shield size={13} />
-                Reset Active Workspace Profile
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={() => {
-              if (window.confirm("Clear browsing history?")) {
-                onClearHistory();
-                alert("History cleared!");
-              }
-            }}
-            className="panel-action-btn"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
-              background: "#1f2233",
-              color: "#e2e8f0",
-              border: "1px solid #2d3142",
-              borderRadius: "6px",
-              padding: "8px",
-              fontSize: "12px",
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            Clear Search & Navigation History
-          </button>
-
-          <button
-            onClick={() => {
-              if (window.confirm("Clear all download records? This won't delete files from disk.")) {
-                onClearDownloads();
-                alert("Download log cleared!");
-              }
-            }}
-            className="panel-action-btn"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "6px",
-              background: "#1f2233",
-              color: "#e2e8f0",
-              border: "1px solid #2d3142",
-              borderRadius: "6px",
-              padding: "8px",
-              fontSize: "12px",
-              fontWeight: 500,
-              cursor: "pointer",
-            }}
-          >
-            Clear Downloads History
-          </button>
-        </div>
-      </div>
-
-      <hr style={{ border: "0", borderTop: "1px solid #232736", margin: "16px 0" }} />
-
-      {/* ── DPAPI Credentials Manager Section ── */}
-      <div className="settings-section" style={{ padding: "0 12px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px" }}>
-          <Lock size={13} color="#a78bfa" />
-          <h4 style={{ margin: 0, color: "#a78bfa", fontSize: "13px" }}>Saved Logins (DPAPI Encrypted)</h4>
-        </div>
-
-        {/* Add credential form */}
-        <form onSubmit={handleAddCredential} style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "16px", background: "#161925", padding: "10px", borderRadius: "6px", border: "1px solid #232736" }}>
-          <span style={{ fontSize: "11px", fontWeight: 600, color: "#717b99" }}>SECURELY SAVE A LOGIN</span>
-          <input
-            className="settings-text-input"
-            value={newSite}
-            onChange={(e) => setNewSite(e.target.value)}
-            placeholder="Website (e.g. google.com)"
-            required
-            style={{ width: "100%" }}
-          />
-          <div style={{ display: "flex", gap: "6px" }}>
-            <input
-              className="settings-text-input"
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
-              placeholder="Username / Email"
-              required
-              style={{ flex: 1, minWidth: 0 }}
-            />
-            <input
-              className="settings-text-input"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Password"
-              required
-              style={{ flex: 1, minWidth: 0 }}
-            />
+      <div className="settings-stack">
+        <div className="settings-card">
+          <div className="settings-card-heading">
+            <div>
+              <span className="settings-label">Preferences</span>
+              <h2>Browser behavior</h2>
+            </div>
           </div>
-          <button
-            type="submit"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "4px",
-              background: "#3e2e5e",
-              color: "#c084fc",
-              border: "1px solid #583e85",
-              borderRadius: "6px",
-              padding: "6px",
-              fontSize: "11px",
-              fontWeight: 600,
-              cursor: "pointer",
-              marginTop: "4px"
-            }}
-          >
-            <Plus size={12} />
-            Save Login
-          </button>
-        </form>
 
-        {/* Credentials list */}
-        {loadingCreds ? (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "20px 0", gap: "8px", color: "#717b99" }}>
-            <Loader2 className="animate-spin" size={16} />
-            <span style={{ fontSize: "11px" }}>Loading secure logins...</span>
-          </div>
-        ) : (
-          <div>
-            <div style={{ position: "relative", marginBottom: "10px" }}>
-              <Search size={12} style={{ position: "absolute", left: "8px", top: "9px", color: "#717b99" }} />
+          <div className="settings-grid">
+            <div className="settings-option">
+              <label>Theme</label>
+              <select value={settings.theme} onChange={(e) => onChange({ theme: e.target.value as ThemeName })}>
+                {THEMES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="settings-option">
+              <label>Search Engine</label>
+              <select
+                value={settings.searchEngine}
+                onChange={(e) => onChange({ searchEngine: e.target.value as SearchEngine })}
+              >
+                {ENGINES.map((engine) => (
+                  <option key={engine.value} value={engine.value}>
+                    {engine.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="settings-option">
+              <label>Home Greeting</label>
               <input
                 className="settings-text-input"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search saved logins..."
-                style={{ width: "100%", paddingLeft: "26px" }}
+                value={settings.homeGreeting}
+                placeholder="Your name or a greeting"
+                onChange={(e) => onChange({ homeGreeting: e.target.value })}
               />
             </div>
 
-            {filteredCreds.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "16px 0", fontSize: "11px", color: "#717b99", fontStyle: "italic" }}>
-                {search ? "No matches found" : "No secure credentials saved yet"}
+            <div className="settings-option">
+              <label>Startup Behavior</label>
+              <select
+                value={settings.startupBehavior || "previous"}
+                onChange={(e) => onChange({ startupBehavior: e.target.value as Settings["startupBehavior"] })}
+              >
+                <option value="previous">Restore last session (Tabs)</option>
+                <option value="home">Open fresh New Tab page</option>
+              </select>
+            </div>
+
+            <div className="settings-option">
+              <label>Downloads Folder</label>
+              <input
+                className="settings-text-input"
+                value={settings.defaultDownloadsPath || "Downloads"}
+                placeholder="Downloads folder path"
+                onChange={(e) => onChange({ defaultDownloadsPath: e.target.value })}
+              />
+            </div>
+
+            <div className="settings-toggle-row">
+              <div>
+                <label htmlFor="ad-block-toggle">Ad & Tracker Shield</label>
+                <p>Toggle the built-in shield for supported browsing flows.</p>
               </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", maxHeight: "250px", overflowY: "auto" }}>
-                {filteredCreds.map((c) => (
-                  <div
-                    key={c.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      background: "#161925",
-                      border: "1px solid #232736",
-                      borderRadius: "6px",
-                      padding: "8px 10px",
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: "12px", fontWeight: 600, color: "#e2e8f0", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>
-                        {c.site}
-                      </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
-                        <span style={{ fontSize: "11px", color: "#717b99", textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", maxWidth: "90px" }}>
-                          {c.username}
-                        </span>
-                        <span style={{ color: "#2d3142" }}>•</span>
-                        <span style={{ fontSize: "11px", color: "#a78bfa", fontFamily: visiblePasswords[c.id] ? "monospace" : "inherit" }}>
-                          {visiblePasswords[c.id] ? c.password_decrypted : "••••••••"}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div style={{ display: "flex", gap: "4px", marginLeft: "8px" }}>
-                      <button
-                        onClick={() => togglePasswordVisibility(c.id)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#717b99",
-                          padding: "4px",
-                          display: "flex",
-                          alignItems: "center"
-                        }}
-                      >
-                        {visiblePasswords[c.id] ? <EyeOff size={13} /> : <Eye size={13} />}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCredential(c.id)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          cursor: "pointer",
-                          color: "#f43f5e",
-                          padding: "4px",
-                          display: "flex",
-                          alignItems: "center"
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+              <input
+                id="ad-block-toggle"
+                type="checkbox"
+                checked={!!settings.adBlockingEnabled}
+                onChange={(e) => onChange({ adBlockingEnabled: e.target.checked })}
+              />
+            </div>
           </div>
-        )}
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-heading">
+            <div>
+              <span className="settings-label">Privacy & browsing data</span>
+              <h2>Cleanup tools</h2>
+            </div>
+          </div>
+
+          <div className="settings-actions">
+            <button onClick={handleClearWorkspaceProfile} disabled={clearingProfile} className="settings-action-btn danger">
+              {clearingProfile ? (
+                <>
+                  <Loader2 className="animate-spin" size={13} />
+                  Wiping data...
+                </>
+              ) : (
+                <>
+                  <Shield size={13} />
+                  Reset Active Workspace Profile
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                if (window.confirm("Clear browsing history?")) {
+                  onClearHistory();
+                  alert("History cleared!");
+                }
+              }}
+              className="settings-action-btn"
+            >
+              <History size={13} />
+              Clear Search & Navigation History
+            </button>
+
+            <button
+              onClick={() => {
+                if (window.confirm("Clear all download records? This won't delete files from disk.")) {
+                  onClearDownloads();
+                  alert("Download log cleared!");
+                }
+              }}
+              className="settings-action-btn"
+            >
+              <Download size={13} />
+              Clear Downloads History
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-heading">
+            <div>
+              <span className="settings-label">Saved logins</span>
+              <h2>DPAPI encrypted vault</h2>
+            </div>
+          </div>
+
+          <form onSubmit={handleAddCredential} className="settings-credential-form">
+            <span className="settings-form-kicker">Securely save a login</span>
+            <input
+              className="settings-text-input"
+              value={newSite}
+              onChange={(e) => setNewSite(e.target.value)}
+              placeholder="Website (e.g. google.com)"
+              required
+            />
+            <div className="settings-credential-row">
+              <input
+                className="settings-text-input"
+                value={newUsername}
+                onChange={(e) => setNewUsername(e.target.value)}
+                placeholder="Username / Email"
+                required
+              />
+              <input
+                className="settings-text-input"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Password"
+                required
+              />
+            </div>
+            <button type="submit" className="settings-action-btn primary">
+              <Plus size={12} />
+              Save Login
+            </button>
+          </form>
+
+          {loadingCreds ? (
+            <div className="settings-loading">
+              <Loader2 className="animate-spin" size={16} />
+              <span>Loading secure logins...</span>
+            </div>
+          ) : (
+            <div className="settings-credentials-wrap">
+              <div className="settings-search">
+                <Search size={12} />
+                <input
+                  className="settings-text-input"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search saved logins..."
+                />
+              </div>
+
+              {filteredCreds.length === 0 ? (
+                <div className="settings-empty-state">
+                  {search ? "No matches found" : "No secure credentials saved yet"}
+                </div>
+              ) : (
+                <div className="settings-credential-list">
+                  {filteredCreds.map((c) => (
+                    <div key={c.id} className="settings-credential-item">
+                      <div className="settings-credential-main">
+                        <div className="settings-credential-site">{c.site}</div>
+                        <div className="settings-credential-meta">
+                          <span className="settings-credential-user">{c.username}</span>
+                          <span className="settings-credential-dot">•</span>
+                          <span
+                            className="settings-credential-pass"
+                            style={{ fontFamily: visiblePasswords[c.id] ? "monospace" : "inherit" }}
+                          >
+                            {visiblePasswords[c.id] ? c.password_decrypted : "••••••••"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="settings-credential-actions">
+                        <button type="button" onClick={() => togglePasswordVisibility(c.id)} className="settings-icon-btn">
+                          {visiblePasswords[c.id] ? <EyeOff size={13} /> : <Eye size={13} />}
+                        </button>
+                        <button type="button" onClick={() => handleDeleteCredential(c.id)} className="settings-icon-btn danger">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

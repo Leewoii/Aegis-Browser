@@ -32,6 +32,7 @@ import {
   DEFAULT_WORKSPACES,
   defaultTabs,
   makeHomeTab,
+  makeSettingsTab,
   makeUpdatesTab,
   makeConsoleTab,
   makeWebTab,
@@ -74,6 +75,7 @@ import { Omnibox, useSuggestions } from "./components/Omnibox";
 import { HomeScreen } from "./components/HomeScreen";
 import { UpdatesScreen } from "./components/UpdatesScreen";
 import { DevConsoleScreen } from "./components/DevConsoleScreen";
+import { SettingsPanel } from "./components/panels/SettingsPanel";
 import { devConsole } from "./services/devConsole";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toasts";
@@ -146,6 +148,7 @@ export default function App() {
   const isSidebarPinnedRef = useRef(isSidebarPinned);
   const tabsRef = useRef(tabs);
   const activeTabIdRef = useRef(activeTabId);
+  const pendingFrontendNavRef = useRef<Record<string, { url: string; at: number }>>({});
   const isClosingRef = useRef(false);
   const storageLoadedRef = useRef(false);
 
@@ -437,7 +440,7 @@ export default function App() {
       if (sidebarData) {
         setIsSidebarPinned(sidebarData.isSidebarPinned);
         setIsPanelPinned(sidebarData.isPanelPinned);
-        setActivePanel(sidebarData.activePanel);
+        setActivePanel(sidebarData.activePanel && sidebarData.activePanel !== "settings" ? sidebarData.activePanel : null);
         setPanelWidth(sidebarData.panelWidth || 340);
         if (sidebarData.mutedPanels.length) {
           setMutedPanels(new Set(sidebarData.mutedPanels));
@@ -637,6 +640,8 @@ export default function App() {
     ]);
     setActiveTabId(tab.id);
     recordHistory(url, title || titleFromUrl(url));
+    // Let the new tab mount first, then sync the native webview to its final bounds.
+    setTimeout(() => void scheduleSyncActive(), 50);
   }
 
   const createWebTabRef = useRef(createWebTab);
@@ -768,6 +773,13 @@ export default function App() {
         const url = typeof payload === "string" ? payload : payload?.url;
         const label = typeof payload === "object" && payload !== null ? payload.label : undefined;
         if (url && url !== "about:blank") {
+          const pending = label ? pendingFrontendNavRef.current[label] : undefined;
+          if (pending && pending.url !== url && Date.now() - pending.at < 3000) {
+            return;
+          }
+          if (label && pending?.url === url) {
+            delete pendingFrontendNavRef.current[label];
+          }
           setTabs((prev) =>
             prev.map((tab) => {
               const matches = label ? tab.label === label : tab.id === activeTabRef.current?.id;
@@ -896,6 +908,7 @@ export default function App() {
   async function navigateTab(id: string, url: string) {
     const tab = tabs.find((item) => item.id === id);
     if (tab) {
+      pendingFrontendNavRef.current[tab.label] = { url, at: Date.now() };
       await invoke("allow_navigation", { label: tab.label, url }).catch(() => undefined);
     }
     setTabs((current) =>
@@ -914,9 +927,13 @@ export default function App() {
       }),
     );
     recordHistory(url, titleFromUrl(url));
-    void invoke("navigate_webview", { label: tab?.label ?? "", url }).catch((err: unknown) => {
-      console.error("Failed to navigate webview:", err);
-    });
+    if (tab) {
+      void invoke("navigate_webview", { label: tab.label, url }).catch((err: unknown) => {
+        console.error("Failed to navigate webview:", err);
+      });
+    }
+    scheduleSyncActive();
+    setTimeout(() => void scheduleSyncActive(), 50);
   }
 
   function switchHistory(direction: -1 | 1) {
@@ -925,6 +942,7 @@ export default function App() {
     const nextIndex = tab.index + direction;
     if (nextIndex < 0 || nextIndex >= tab.history.length) return;
     const nextUrl = tab.history[nextIndex];
+    pendingFrontendNavRef.current[tab.label] = { url: nextUrl, at: Date.now() };
     setTabs((current) =>
       current.map((item) =>
         item.id === tab.id
@@ -936,6 +954,7 @@ export default function App() {
     void invoke("navigate_webview", { label: tab.label, url: nextUrl }).catch((err: unknown) => {
       console.error(`Failed to navigate ${direction < 0 ? "back" : "forward"}:`, err);
     });
+    setTimeout(() => void scheduleSyncActive(), 50);
   }
 
   const goBack = useCallback(() => switchHistory(-1), [activeTab]);
@@ -1876,9 +1895,12 @@ export default function App() {
                       }
                       const newHistory = [...splitLeftTab.history.slice(0, splitLeftTab.index + 1), url];
                       setTabs((prev) => prev.map((t) =>
-                        t.id === splitLeftTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: url } : t
+                        t.id === splitLeftTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: titleFromUrl(url) } : t
                       ));
-                      setTimeout(() => void scheduleSyncActive(), 50);
+                      recordHistory(url, titleFromUrl(url));
+                      void invoke("allow_navigation", { label: splitLeftTab.label, url }).catch(() => undefined);
+                      void invoke("navigate_webview", { label: splitLeftTab.label, url }).catch(() => undefined);
+                      scheduleSyncActive();
                     }}
                     suggestions={splitState.activeSide === "left" ? suggestions : []}
                     onScan={triggerScan}
@@ -1905,7 +1927,9 @@ export default function App() {
                           const newIdx = splitRightTab.index - 1;
                           const url = splitRightTab.history[newIdx];
                           setTabs((prev) => prev.map((t) => t.id === splitRightTab.id ? { ...t, url, index: newIdx } : t));
-                          setTimeout(() => void scheduleSyncActive(), 50);
+                          void invoke("allow_navigation", { label: splitRightTab.label, url }).catch(() => undefined);
+                          void invoke("navigate_webview", { label: splitRightTab.label, url }).catch(() => undefined);
+                          scheduleSyncActive();
                         }
                       }}
                       disabled={splitRightTab.index <= 0}
@@ -1923,7 +1947,9 @@ export default function App() {
                           const newIdx = splitRightTab.index + 1;
                           const url = splitRightTab.history[newIdx];
                           setTabs((prev) => prev.map((t) => t.id === splitRightTab.id ? { ...t, url, index: newIdx } : t));
-                          setTimeout(() => void scheduleSyncActive(), 50);
+                          void invoke("allow_navigation", { label: splitRightTab.label, url }).catch(() => undefined);
+                          void invoke("navigate_webview", { label: splitRightTab.label, url }).catch(() => undefined);
+                          scheduleSyncActive();
                         }
                       }}
                       disabled={splitRightTab.index >= splitRightTab.history.length - 1}
@@ -1980,9 +2006,12 @@ export default function App() {
                       }
                       const newHistory = [...splitRightTab.history.slice(0, splitRightTab.index + 1), url];
                       setTabs((prev) => prev.map((t) =>
-                        t.id === splitRightTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: url } : t
+                        t.id === splitRightTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: titleFromUrl(url) } : t
                       ));
-                      setTimeout(() => void scheduleSyncActive(), 50);
+                      recordHistory(url, titleFromUrl(url));
+                      void invoke("allow_navigation", { label: splitRightTab.label, url }).catch(() => undefined);
+                      void invoke("navigate_webview", { label: splitRightTab.label, url }).catch(() => undefined);
+                      scheduleSyncActive();
                     }}
                     suggestions={splitState.activeSide === "right" ? suggestions : []}
                     onScan={triggerScan}

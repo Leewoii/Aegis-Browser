@@ -125,6 +125,20 @@ export function makeConsoleTab(workspaceId = "personal"): Tab {
   };
 }
 
+export function makeSettingsTab(workspaceId = "personal"): Tab {
+  const id = `settings-${uid()}`;
+  return {
+    id,
+    kind: "settings",
+    title: "Settings",
+    url: "",
+    label: `Aegis-settings-${id}`,
+    history: [],
+    index: -1,
+    workspaceId,
+  };
+}
+
 export function makeWebTab(url: string, title?: string, group?: string, workspaceId = "personal"): Tab {
   const id = uid();
   return {

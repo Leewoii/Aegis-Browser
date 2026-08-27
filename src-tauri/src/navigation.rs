@@ -12,6 +12,26 @@ use tauri::{
 const FRONTEND_NAV_WINDOW: Duration = Duration::from_secs(5);
 const EMIT_DEBOUNCE: Duration = Duration::from_millis(1500);
 
+/// Streaming providers rely on the browser's native popup, media, and DRM APIs.
+/// The browser's navigation helper replaces some of those APIs, so leave these
+/// top-level pages untouched.
+fn should_inject_navigation_helper(label: &str, page_url: &str) -> bool {
+  if !(label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-")) {
+    return false;
+  }
+
+  let protected_host = url::Url::parse(page_url)
+    .ok()
+    .and_then(|parsed| parsed.host_str().map(str::to_ascii_lowercase))
+    .is_some_and(|host| {
+      ["netflix.com", "crunchyroll.com"]
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+    });
+
+  !protected_host
+}
+
 /// Redact sensitive query parameters (such as tokens, passwords, secrets) from URLs for logging.
 fn redact_url(raw: &str) -> String {
   if let Ok(mut parsed) = url::Url::parse(raw) {
@@ -249,7 +269,7 @@ pub fn aegis_navigation_plugin(
           println!("[Aegis-nav] PAGE_LOAD_STARTED label={} url={}", label, redact_url(&url));
           let _ = webview.emit_to("main", "Aegis-page-load-started", &url);
 
-          if label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-") {
+          if should_inject_navigation_helper(&label, &url) {
             let _ = webview.eval(interception_script);
           }
         }
@@ -263,7 +283,7 @@ pub fn aegis_navigation_plugin(
             "url": url,
           }));
 
-          if label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-") {
+          if should_inject_navigation_helper(&label, &url) {
             let _ = webview.eval(interception_script);
           }
         }
