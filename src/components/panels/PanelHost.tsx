@@ -1,9 +1,8 @@
-import type { Bookmark, DownloadEntry, HistoryEntry, PanelId, Settings } from "../../types";
+import type { Bookmark, DownloadEntry, HistoryEntry, PanelId } from "../../types";
 import { isWebAppPanel, PANEL_TITLES } from "../../types";
 import { BookmarksPanel } from "./BookmarksPanel";
 import { HistoryPanel } from "./HistoryPanel";
 import { DownloadsPanel } from "./DownloadsPanel";
-import { SettingsPanel } from "./SettingsPanel";
 import { NotesPanel } from "./NotesPanel";
 import { TerminalPanel } from "./TerminalPanel";
 
@@ -23,11 +22,6 @@ interface PanelHostProps {
   onCancelDownload?: (id: string) => void;
   onRetryDownload?: (id: string) => void;
   onDeleteDownload?: (id: string) => void;
-  settings: Settings;
-  onSettingsChange: (patch: Partial<Settings>) => void;
-  activeWorkspaceId: string;
-  onClearDownloads: () => void;
-  onClearProfileData: (profileKey: string) => Promise<void>;
 }
 
 export function PanelHeader({ panel }: { panel: PanelId }) {
@@ -72,17 +66,6 @@ export function PanelContent(props: PanelHostProps) {
           onCancel={props.onCancelDownload}
           onRetry={props.onRetryDownload}
           onDelete={props.onDeleteDownload}
-        />
-      );
-    case "settings":
-      return (
-        <SettingsPanel
-          settings={props.settings}
-          onChange={props.onSettingsChange}
-          activeWorkspaceId={props.activeWorkspaceId}
-          onClearHistory={props.onClearHistory}
-          onClearDownloads={props.onClearDownloads}
-          onClearProfileData={props.onClearProfileData}
         />
       );
     case "notes":

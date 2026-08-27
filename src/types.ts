@@ -124,7 +124,6 @@ export type PanelId =
   | "bookmarks"
   | "downloads"
   | "history"
-  | "settings"
   | "chatgpt"
   | "twitch"
   | "messenger"
@@ -140,7 +139,6 @@ export const PANEL_TITLES: Record<PanelId, string> = {
   bookmarks: "Bookmarks",
   downloads: "Downloads",
   history: "History",
-  settings: "Settings",
   chatgpt: "ChatGPT",
   twitch: "Twitch",
   messenger: "Messenger",

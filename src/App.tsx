@@ -75,7 +75,7 @@ import { Omnibox, useSuggestions } from "./components/Omnibox";
 import { HomeScreen } from "./components/HomeScreen";
 import { UpdatesScreen } from "./components/UpdatesScreen";
 import { DevConsoleScreen } from "./components/DevConsoleScreen";
-import { SettingsPanel } from "./components/panels/SettingsPanel";
+import { SettingsScreen } from "./components/SettingsScreen";
 import { devConsole } from "./services/devConsole";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toasts";
@@ -440,10 +440,12 @@ export default function App() {
       if (sidebarData) {
         setIsSidebarPinned(sidebarData.isSidebarPinned);
         setIsPanelPinned(sidebarData.isPanelPinned);
-        setActivePanel(sidebarData.activePanel && sidebarData.activePanel !== "settings" ? sidebarData.activePanel : null);
+        // Legacy migration: "settings" was previously a side panel, now it's a tab
+        const legacyPanel = sidebarData.activePanel as string | null;
+        setActivePanel(legacyPanel === "settings" ? null : sidebarData.activePanel);
         setPanelWidth(sidebarData.panelWidth || 340);
         if (sidebarData.mutedPanels.length) {
-          setMutedPanels(new Set(sidebarData.mutedPanels));
+          setMutedPanels(new Set(sidebarData.mutedPanels.filter((p) => p !== "settings")));
         }
       }
       if (savedWindow) {
@@ -1009,6 +1011,19 @@ export default function App() {
       return;
     }
     const tab = makeConsoleTab(activeWorkspaceId);
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  }
+
+  function openSettingsTab() {
+    if (!isSidebarPinned) setIsSidebarHovered(false);
+    if (!isPanelPinned) setActivePanel(null);
+    const existing = tabs.find((tab) => tab.kind === "settings" && tab.workspaceId === activeWorkspaceId);
+    if (existing) {
+      setActiveTabId(existing.id);
+      return;
+    }
+    const tab = makeSettingsTab(activeWorkspaceId);
     setTabs((current) => [...current, tab]);
     setActiveTabId(tab.id);
   }
@@ -1624,6 +1639,7 @@ export default function App() {
   const contentIsHome = activeTab.kind === "home";
   const contentIsUpdates = activeTab.kind === "updates";
   const contentIsConsole = activeTab.kind === "console";
+  const contentIsSettings = activeTab.kind === "settings";
   // Split view only applies when the currently active tab is one of the two paired split tabs
   const contentIsSplit =
     splitState !== null &&
@@ -1668,6 +1684,8 @@ export default function App() {
         isConsoleOpen={contentIsConsole}
         onUpdatesClick={openUpdatesTab}
         isUpdatesOpen={contentIsUpdates}
+        onSettingsClick={openSettingsTab}
+        isSettingsOpen={contentIsSettings}
         isHovered={isSidebarHovered}
         onHoverChange={(hovered) => {
           setIsSidebarHovered(hovered);
@@ -1741,11 +1759,6 @@ export default function App() {
               onCancelDownload={(id) => downloadManager.cancel(id)}
               onRetryDownload={(id) => downloadManager.retry(id)}
               onDeleteDownload={(id) => downloadManager.delete(id)}
-              settings={settings}
-              onSettingsChange={(patch) => setSettings((prev) => ({ ...prev, ...patch }))}
-              activeWorkspaceId={activeWorkspaceId}
-              onClearDownloads={() => downloadManager.clearAll()}
-              onClearProfileData={handleClearProfileData}
             />
           </div>
           <div className="panel-resize-handle no-drag" onMouseDown={startResize} title="Resize panel" />
@@ -2050,7 +2063,7 @@ export default function App() {
                   </button>
                 </div>
 
-                {!contentIsHome && !contentIsUpdates && !contentIsConsole && (
+                {!contentIsHome && !contentIsUpdates && !contentIsConsole && !contentIsSettings && (
                   <Omnibox
                     url={activeTab.url}
                     query={query}
@@ -2153,13 +2166,26 @@ export default function App() {
 
             {!contentIsSplit && contentIsUpdates && <UpdatesScreen />}
             {!contentIsSplit && contentIsConsole && <DevConsoleScreen />}
+            {!contentIsSplit && contentIsSettings && (
+              <SettingsScreen
+                settings={settings}
+                onChange={(patch) => setSettings((prev) => ({ ...prev, ...patch }))}
+                activeWorkspaceId={activeWorkspaceId}
+                onClearHistory={() => {
+                  setHistoryEntries([]);
+                  void clearHistoryDb();
+                }}
+                onClearDownloads={() => downloadManager.clearAll()}
+                onClearProfileData={handleClearProfileData}
+              />
+            )}
 
-            {!contentIsSplit && !contentIsHome && !contentIsUpdates && !contentIsConsole && (
+            {!contentIsSplit && !contentIsHome && !contentIsUpdates && !contentIsConsole && !contentIsSettings && (
               <div className={`loading-bar ${isLoading ? "loading" : ""}`} />
             )}
             <div
               className={`webview-holder ${
-                contentIsSplit || contentIsHome || contentIsUpdates || contentIsConsole ? "hidden" : ""
+                contentIsSplit || contentIsHome || contentIsUpdates || contentIsConsole || contentIsSettings ? "hidden" : ""
               }`}
             />
           </main>
