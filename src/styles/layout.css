@@ -30,6 +30,49 @@
   z-index: 1;
 }
 
+/* ── Maximized / fullscreen: bleed to screen edges, no rounded window ────── */
+html.is-maximized,
+html.is-maximized body,
+html.is-maximized #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-window);
+}
+
+html.is-maximized .app-container,
+.app-container.is-maximized {
+  border: 0;
+  border-radius: 0;
+  background-clip: border-box;
+  overflow: hidden;
+}
+
+html.is-maximized .app-container::before,
+.app-container.is-maximized::before {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+html.is-maximized .sidebar-shell,
+.app-container.is-maximized .sidebar-shell {
+  border-radius: 0;
+}
+
+html.is-maximized .sidebar-shell::after,
+.app-container.is-maximized .sidebar-shell::after {
+  top: 0;
+  bottom: 0;
+}
+
+html.is-maximized .window-resize-handle,
+.app-container.is-maximized .window-resize-handle {
+  display: none !important;
+  pointer-events: none;
+}
+
 /* ── Frameless window resize handles ───────────────────────────────── */
 .window-resize-handle {
   position: absolute;

@@ -81,6 +81,33 @@ pub fn set_webview_muted<R: Runtime>(
   Err(format!("Webview '{}' not found for muting", label))
 }
 
+/// Evaluate arbitrary JS in a webview by label (used for extensions e.g. Netflix auto-skip)
+#[tauri::command]
+pub fn eval_in_webview<R: Runtime>(
+  app: AppHandle<R>,
+  label: String,
+  script: String,
+) -> Result<(), String> {
+  // Search standalone webview windows first
+  for (_, window) in app.webview_windows() {
+    if window.label() == label {
+      return window
+        .eval(&script)
+        .map_err(|e| format!("Failed to eval in webview '{}': {}", label, e));
+    }
+  }
+  if let Some(window) = app.get_window("main") {
+    for child in window.webviews() {
+      if child.label() == label {
+        return child
+          .eval(&script)
+          .map_err(|e| format!("Failed to eval in webview '{}': {}", label, e));
+      }
+    }
+  }
+  Err(format!("Webview '{}' not found for eval", label))
+}
+
 /// Clear profile directory data for a given workspace or panel profile.
 #[tauri::command]
 pub fn clear_profile_data<R: Runtime>(

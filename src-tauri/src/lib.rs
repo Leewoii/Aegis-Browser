@@ -37,6 +37,7 @@ pub fn run() {
       commands::allow_navigation,
       commands::navigate_webview,
       commands::set_webview_muted,
+      commands::eval_in_webview,
       commands::clear_profile_data,
       commands::debug_log,
       security::encrypt_secret,

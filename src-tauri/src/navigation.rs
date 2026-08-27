@@ -203,6 +203,22 @@ pub fn aegis_navigation_plugin(
         return false;
       }
 
+      // Netflix extension toggle from injected floating panel
+      if url_string.starts_with("sx-internal://netflix-toggle") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          let mut key: Option<String> = None;
+          let mut value: Option<String> = None;
+          for (k, v) in parsed.query_pairs() {
+            if k == "key" { key = Some(v.to_string()); }
+            if k == "value" { value = Some(v.to_string()); }
+          }
+          if let (Some(k), Some(v)) = (key, value) {
+            let _ = window.emit_to("main", "Aegis-netflix-toggle", serde_json::json!({ "key": k, "value": v }));
+          }
+        }
+        return false;
+      }
+
       // Direct download URL detected (GitHub release assets, .exe/.zip etc.)
       if is_download_url(&url_string) {
         println!("[Aegis-nav] DOWNLOAD_DETECTED label={} url={}", label, redact_url(&url_string));

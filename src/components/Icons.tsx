@@ -46,3 +46,12 @@ export const SpotifyIcon = ({ size = 18 }: IconProps) => (
     />
   </svg>
 );
+
+export const NetflixIcon = ({ size = 18 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+    <rect width="24" height="24" rx="4" fill="#E50914" />
+    {/* stylized N */}
+    <path d="M7.2 5.6 L7.2 18.4 L9.1 18.4 L13.6 9.2 L13.6 18.4 L15.8 18.4 L15.8 5.6 L13.9 5.6 L9.4 14.8 L9.4 5.6 Z" fill="white" />
+    <path d="M7.2 5.6 L8.0 5.6 L8.0 18.4 L7.2 18.4 Z" fill="black" opacity="0.18" />
+  </svg>
+);

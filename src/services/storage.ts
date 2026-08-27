@@ -945,6 +945,45 @@ export async function saveSettings(settings: Settings): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Extension: Netflix auto-skip
+// ---------------------------------------------------------------------------
+
+export type NetflixExtensionSettings = {
+  skipRecap: boolean;
+  skipIntro: boolean;
+  nextEpisode: boolean;
+};
+
+export const DEFAULT_NETFLIX_SETTINGS: NetflixExtensionSettings = {
+  skipRecap: true,
+  skipIntro: true,
+  nextEpisode: true,
+};
+
+export async function loadNetflixSettings(): Promise<NetflixExtensionSettings> {
+  const database = await getDb();
+  const rows = await database.select<Array<{ key: string; value: string }>>(
+    "SELECT key, value FROM settings WHERE key IN ('netflix_skipRecap','netflix_skipIntro','netflix_nextEpisode')",
+  );
+  const out = { ...DEFAULT_NETFLIX_SETTINGS };
+  for (const r of rows) {
+    if (r.key === "netflix_skipRecap") out.skipRecap = r.value === "true";
+    else if (r.key === "netflix_skipIntro") out.skipIntro = r.value === "true";
+    else if (r.key === "netflix_nextEpisode") out.nextEpisode = r.value === "true";
+  }
+  return out;
+}
+
+export async function saveNetflixSettings(s: NetflixExtensionSettings): Promise<void> {
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await upsertSetting(database, "netflix_skipRecap", s.skipRecap ? "true" : "false");
+    await upsertSetting(database, "netflix_skipIntro", s.skipIntro ? "true" : "false");
+    await upsertSetting(database, "netflix_nextEpisode", s.nextEpisode ? "true" : "false");
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Bookmarks
 // ---------------------------------------------------------------------------
 

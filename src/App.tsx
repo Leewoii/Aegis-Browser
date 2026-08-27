@@ -66,6 +66,10 @@ import {
   saveActiveWorkspace,
   appendHistory,
   clearHistory as clearHistoryDb,
+  loadNetflixSettings,
+  saveNetflixSettings,
+  DEFAULT_NETFLIX_SETTINGS,
+  type NetflixExtensionSettings,
 } from "./services/storage";
 import { downloadManager } from "./services/downloads";
 
@@ -76,6 +80,7 @@ import { HomeScreen } from "./components/HomeScreen";
 import { UpdatesScreen } from "./components/UpdatesScreen";
 import { DevConsoleScreen } from "./components/DevConsoleScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { NetflixExtension } from "./components/extensions/NetflixExtension";
 import { devConsole } from "./services/devConsole";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toasts";
@@ -105,6 +110,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState(HOME_TAB_ID);
   const [query, setQuery] = useState("");
   const [settings, setSettings] = useState<Settings>({ ...DEFAULT_SETTINGS });
+  const [netflixSettings, setNetflixSettings] = useState<NetflixExtensionSettings>({ ...DEFAULT_NETFLIX_SETTINGS });
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
   const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
@@ -136,6 +142,7 @@ export default function App() {
   const [panelWidth, setPanelWidth] = useState(340);
   const [isResizing, setIsResizing] = useState(false);
   const panelWidthRef = useRef(340);
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   // ── Refs ──────────────────────────────────────────────────────────
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -390,6 +397,7 @@ export default function App() {
         wsIdData,
         sidebarData,
         savedWindow,
+        netflixData,
       ] = await Promise.all([
         loadTabs(),
         loadSettings(),
@@ -401,6 +409,7 @@ export default function App() {
         loadActiveWorkspace(),
         loadSidebarState(),
         loadWindowState(),
+        loadNetflixSettings(),
       ]);
       if (cancelled) return;
 
@@ -448,6 +457,7 @@ export default function App() {
           setMutedPanels(new Set(sidebarData.mutedPanels.filter((p) => p !== "settings")));
         }
       }
+      setNetflixSettings(netflixData);
       if (savedWindow) {
         try {
           const appWindow = getCurrentWindow();
@@ -552,6 +562,10 @@ export default function App() {
   useEffect(() => {
     if (storageLoadedRef.current && !isClosingRef.current) void saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (storageLoadedRef.current && !isClosingRef.current) void saveNetflixSettings(netflixSettings);
+  }, [netflixSettings]);
 
   useEffect(() => {
     if (storageLoadedRef.current && !isClosingRef.current) void saveBookmarks(bookmarks);
@@ -884,6 +898,48 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", settings.theme);
   }, [settings.theme]);
+
+  // ── Maximized / fullscreen detection → removes outer radius + gaps ──
+  useEffect(() => {
+    document.documentElement.classList.toggle("is-maximized", isWindowMaximized);
+  }, [isWindowMaximized]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenResize: (() => void) | undefined;
+
+    const check = async () => {
+      try {
+        const w = getCurrentWindow();
+        const [max, full] = await Promise.all([w.isMaximized(), w.isFullscreen()]);
+        if (!cancelled) setIsWindowMaximized(max || full);
+      } catch {
+        // ignore — fallback to window.matchMedia or outer size check
+        if (!cancelled) setIsWindowMaximized(window.outerWidth >= window.screen.width && window.outerHeight >= window.screen.height);
+      }
+    };
+
+    void check();
+    const onWinResize = () => void check();
+    window.addEventListener("resize", onWinResize);
+    getCurrentWindow()
+      .onResized(() => void check())
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlistenResize = fn;
+      })
+      .catch(() => undefined);
+
+    // Poll as fallback — Tauri may not fire on fullscreen toggle on all platforms
+    const interval = window.setInterval(() => void check(), 900);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("resize", onWinResize);
+      unlistenResize?.();
+      window.clearInterval(interval);
+    };
+  }, []);
 
   // ── Navigation actions ────────────────────────────────────────────
 
@@ -1653,7 +1709,7 @@ export default function App() {
   // ── Render ────────────────────────────────────────────────────────
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${isWindowMaximized ? "is-maximized" : ""}`}>
       {/* ── Frameless window resize handles (all edges + corners) ── */}
       <div className="window-resize-handle top no-drag" onMouseDown={handleWindowResize("North")} />
       <div className="window-resize-handle right no-drag" onMouseDown={handleWindowResize("East")} />
@@ -2077,6 +2133,16 @@ export default function App() {
                 )}
 
                 <div className="sub-toolbar-spacer" />
+
+                {/* Extensions — left of bookmarks, right of URL */}
+                <div className="extensions-cluster no-drag">
+                  <NetflixExtension
+                    tabs={tabs}
+                    activeTab={activeTab}
+                    settings={netflixSettings}
+                    onChange={(patch) => setNetflixSettings((prev) => ({ ...prev, ...patch }))}
+                  />
+                </div>
 
                 {/* Reorganized chrome actions positioned at the END of the sub-toolbar */}
                 <ChromeActions
