@@ -101,7 +101,17 @@ export type WindowState = {
 
 export type SearchEngine = "duckduckgo" | "google" | "bing";
 
-export type ThemeName = "dark" | "amoled" | "nord";
+export type ThemeName =
+  | "dark"
+  | "amoled"
+  | "nord"
+  | "light"
+  | "dracula"
+  | "catppuccin"
+  | "solarized"
+  | "tokyo"
+  | "gruvbox"
+  | "rose-pine";
 
 export type Settings = {
   theme: ThemeName;

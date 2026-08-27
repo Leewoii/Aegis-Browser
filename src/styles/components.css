@@ -2124,8 +2124,15 @@
 }
 
 .settings-theme-swatch.theme-dark { background: #06070c; }
-.settings-theme-swatch.theme-amoled { background: #000000; }
+.settings-theme-swatch.theme-amoled { background: #000000; border-color: rgba(255,255,255,0.12); }
 .settings-theme-swatch.theme-nord { background: #2e3440; }
+.settings-theme-swatch.theme-light { background: #f8fafc; border-color: rgba(0,0,0,0.12); }
+.settings-theme-swatch.theme-dracula { background: #282a36; }
+.settings-theme-swatch.theme-catppuccin { background: #1e1e2e; }
+.settings-theme-swatch.theme-solarized { background: #002b36; }
+.settings-theme-swatch.theme-tokyo { background: #1a1b26; }
+.settings-theme-swatch.theme-gruvbox { background: #282828; }
+.settings-theme-swatch.theme-rose-pine { background: #191724; }
 
 .settings-theme-label {
   display: flex;

@@ -43,6 +43,13 @@ const THEMES: Array<{ value: ThemeName; label: string; desc: string }> = [
   { value: "dark", label: "Dark", desc: "Default · #06070c" },
   { value: "amoled", label: "Amoled", desc: "Pure black · OLED" },
   { value: "nord", label: "Nord", desc: "Cool gray · #2e3440" },
+  { value: "light", label: "Light", desc: "Bright · #f8fafc" },
+  { value: "dracula", label: "Dracula", desc: "Violet · #282a36" },
+  { value: "catppuccin", label: "Catppuccin", desc: "Mocha · #1e1e2e" },
+  { value: "solarized", label: "Solarized", desc: "Teal · #002b36" },
+  { value: "tokyo", label: "Tokyo Night", desc: "Blue · #1a1b26" },
+  { value: "gruvbox", label: "Gruvbox", desc: "Warm · #282828" },
+  { value: "rose-pine", label: "Rose Pine", desc: "Rose · #191724" },
 ];
 
 const ENGINES: Array<{ value: SearchEngine; label: string }> = [
