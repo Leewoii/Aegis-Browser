@@ -165,7 +165,7 @@ src-tauri/
 
 ## Storage
 
-All browser state is stored in a local SQLite database (`silentx.db`). No cloud sync. Data stays on the local machine per user profile. Tabs, bookmarks, history, downloads, settings, workspace definitions, sidebar state, window geometry, and closed-tab records are all persisted. Encrypted data (notes, credentials) is stored in a `secure_vault` table with OS-level encryption on Windows.
+All browser state is stored in a local SQLite database (`Aegis.db`). No cloud sync. Data stays on the local machine per user profile. Tabs, bookmarks, history, downloads, settings, workspace definitions, sidebar state, window geometry, and closed-tab records are all persisted. Encrypted data (notes, credentials) is stored in a `secure_vault` table with OS-level encryption on Windows.
 
 ## Build Targets
 
