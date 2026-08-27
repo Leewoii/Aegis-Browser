@@ -203,12 +203,12 @@ jobs:
           $hasChanges = git diff --cached --quiet; $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             git commit -m "chore: bump version to $ver"
-            git tag $tag 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host "Tag $tag already exists or failed to create" }
+            git tag -f $tag 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host "Tag $tag already exists or failed to create" }
             git push origin HEAD 2>&1 | Write-Host
-            git push origin $tag 2>&1 | Write-Host
+            git push --force origin $tag 2>&1 | Write-Host
           } else {
             Write-Host "No version changes to commit"
-            # Ensure tag exists on remote
-            git tag $tag 2>$null
-            git push origin $tag 2>&1 | Write-Host
+            # Ensure tag exists on remote (force-update to current HEAD if needed)
+            git tag -f $tag 2>$null
+            git push --force origin $tag 2>&1 | Write-Host
           }
