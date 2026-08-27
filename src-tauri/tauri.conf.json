@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Aegis Browser",
+  "productName": "Aegis",
   "version": "1.3.0",
   "identifier": "com.aegis.browser",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Aegis Browser",
+        "title": "Aegis",
         "width": 1440,
         "height": 920,
         "minWidth": 1024,
