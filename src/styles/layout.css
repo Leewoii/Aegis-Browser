@@ -1,8 +1,13 @@
 /* ── Aegis V2 Layout — One Unified Surface ──────────────────────── */
 
 .app-container {
-  display: flex;
-  flex-direction: row;
+  /* synchronized geometry — JS sets --sidebar-visual-w / --main-offset / --panel-w / --panel-push-w / --main-left */
+  --sidebar-visual-w: 56px;
+  --main-offset: 56px;
+  --panel-w: 0px;
+  --panel-push-w: 0px;
+  --main-left: 56px;
+  position: relative;
   height: 100%;
   width: 100%;
   min-height: 0;
@@ -15,7 +20,6 @@
   border-radius: var(--radius-window);
   box-shadow: none;
   overflow: hidden;
-  position: relative;
   user-select: none;
   background-clip: padding-box;
 }
@@ -146,14 +150,21 @@ html.is-maximized .window-resize-handle,
 }
 
 .main-content-column {
+  position: absolute;
+  left: var(--main-left, 56px);
+  right: 0;
+  top: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
-  flex: 1;
   min-width: 0;
-  height: 100%;
-  position: relative;
   overflow: hidden;
   z-index: 0;
+  /* keep chrome + viewport in lockstep with sidebar/panel */
+  transition: left 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: left;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* ── Top Chrome Bar ───────────────────────────────────────────────── */
@@ -611,16 +622,23 @@ html.is-maximized .window-resize-handle,
 /* ── Collapsible & Pinnable Sidebar ───────────────────────────────── */
 
 .sidebar-shell {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
   z-index: 25;
-  height: 100%;
+  width: var(--sidebar-visual-w);
   background: var(--bg-sidebar);
   border-right: none;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  transition: width var(--speed-med) var(--ease-out), transform var(--speed-med) var(--ease-out);
   overflow: hidden;
   border-radius: var(--radius-window) 0 0 var(--radius-window);
+  /* single easing for all chrome/viewport — keeps sidebar + panel + viewport in sync */
+  transition: width 220ms cubic-bezier(0.2, 0.9, 0.3, 1), box-shadow 220ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  will-change: width;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .sidebar-shell::after {
@@ -635,11 +653,10 @@ html.is-maximized .window-resize-handle,
 }
 
 .sidebar-shell.collapsed {
-  width: var(--sidebar-collapsed-width);
+  /* width driven by --sidebar-visual-w */
 }
 
 .sidebar-shell.expanded {
-  width: var(--sidebar-expanded-width);
   box-shadow: 6px 0 24px rgba(0, 0, 0, 0.4);
 }
 

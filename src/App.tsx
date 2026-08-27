@@ -877,6 +877,25 @@ export default function App() {
     };
   }, [scheduleSyncActive]);
 
+  // Keep native webview bounds in lockstep with CSS 220ms layout transition (sidebar pin, panel open/close, maximize)
+  // isSidebarHovered is intentionally excluded — hover is an overlay (no viewport resize)
+  useEffect(() => {
+    if (isClosingRef.current) return;
+    let raf: number | null = null;
+    const start = performance.now();
+    const duration = 260;
+    const tick = (now: number) => {
+      scheduleSyncActive();
+      if (now - start < duration) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
+  }, [isSidebarPinned, activePanel, isPanelPinned, panelWidth, isWindowMaximized, scheduleSyncActive]);
+
   // Hide webview when omnibox dropdown is visible or when a modal is open
   useEffect(() => {
     if (isClosingRef.current) return;
@@ -1706,10 +1725,28 @@ export default function App() {
   const canGoForward = activeTab.kind === "web" && activeTab.index < activeTab.history.length - 1;
   const panelIsWebApp = activePanel !== null && isWebAppPanel(activePanel);
 
+  // ── Smooth sidebar / panel geometry (single source of truth for CSS) ──
+  const sidebarVisualWidth = isSidebarPinned || isSidebarHovered ? 260 : 56;
+  const mainOffset = isSidebarPinned ? 260 : 56;
+  const panelVisibleWidth = activePanel ? panelWidth : 0;
+  const panelPushWidth = isPanelPinned && activePanel ? panelWidth : 0;
+
   // ── Render ────────────────────────────────────────────────────────
 
   return (
-    <div className={`app-container ${isWindowMaximized ? "is-maximized" : ""}`}>
+    <div
+      className={`app-container ${isWindowMaximized ? "is-maximized" : ""}`}
+      style={
+        {
+          "--sidebar-visual-w": `${sidebarVisualWidth}px`,
+          "--main-offset": `${mainOffset}px`,
+          "--panel-w": `${panelVisibleWidth}px`,
+          "--panel-push-w": `${panelPushWidth}px`,
+          "--main-left": `${mainOffset + panelPushWidth}px`,
+          "--sidebar-left": `${sidebarVisualWidth}px`,
+        } as React.CSSProperties
+      }
+    >
       {/* ── Frameless window resize handles (all edges + corners) ── */}
       <div className="window-resize-handle top no-drag" onMouseDown={handleWindowResize("North")} />
       <div className="window-resize-handle right no-drag" onMouseDown={handleWindowResize("East")} />
@@ -1745,9 +1782,11 @@ export default function App() {
         isHovered={isSidebarHovered}
         onHoverChange={(hovered) => {
           setIsSidebarHovered(hovered);
-          scheduleSyncActive();
         }}
-        onTransitionEnd={() => scheduleSyncActive()}
+        onTransitionEnd={() => {
+          // pinned pin/unpin is the only sidebar transition that moves the viewport (hover is overlay)
+          if (isSidebarPinned) scheduleSyncActive();
+        }}
       />
 
       {/* ── Sidebar Panel docked directly to sidebar running full window height ── */}
