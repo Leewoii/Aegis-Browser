@@ -183,7 +183,7 @@ export function DevConsoleScreen() {
             </div>
             <h1>System & Persistence Diagnostics</h1>
             <p className="dev-console-subtitle">
-              Monitor browser exceptions, failed API requests, SQLite database queries, and persistence synchronization state in real time.
+              Monitor browser exceptions, browsed-site JS/console errors, failed API requests (inc. Updates), SQLite/Settings vault, and persistence sync in real time.
             </p>
           </div>
         </div>
@@ -364,6 +364,12 @@ export function DevConsoleScreen() {
             onClick={() => setActiveCategory("persistence")}
           >
             <ArrowRightLeft size={12} /> Persistence / State
+          </button>
+          <button
+            className={`filter-pill webview ${activeCategory === "webview" ? "active" : ""}`}
+            onClick={() => setActiveCategory("webview")}
+          >
+            <Globe size={12} /> WebView / Site
           </button>
         </div>
 

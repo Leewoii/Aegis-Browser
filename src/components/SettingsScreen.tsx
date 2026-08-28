@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import type { SearchEngine, Settings, ThemeName } from "../types";
 import { retrieveSecureSecret, storeSecureSecret } from "../services/storage";
+import { devConsole } from "../services/devConsole";
 
 type SectionId = "general" | "appearance" | "privacy" | "passwords";
 
@@ -101,12 +102,19 @@ export function SettingsScreen({
         if (active && raw) {
           try {
             setCredentials(JSON.parse(raw));
-          } catch {
+            devConsole.settings("info", "Vault Load OK", `Loaded ${JSON.parse(raw)?.length ?? 0} credentials from secure storage`, { entity: "vault" });
+          } catch (parseErr) {
+            const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+            devConsole.settings("error", "Vault JSON Parse Failed", msg, { error: parseErr, stack: parseErr instanceof Error ? parseErr.stack : undefined });
             setCredentials([]);
           }
+        } else if (active) {
+          devConsole.settings("info", "Vault Empty", "No saved credentials in secure storage", { entity: "vault" });
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         console.error("Failed to load credentials:", err);
+        devConsole.settings("error", "Vault Load Failed", msg, { error: err, stack: err instanceof Error ? err.stack : undefined });
       } finally {
         if (active) setLoadingCreds(false);
       }
@@ -120,8 +128,11 @@ export function SettingsScreen({
     setCredentials(list);
     try {
       await storeSecureSecret("saved_credentials", JSON.stringify(list));
+      devConsole.settings("info", "Vault Save OK", `Persisted ${list.length} credentials to secure storage`, { entity: "vault", count: list.length });
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to save credentials:", err);
+      devConsole.settings("error", "Vault Save Failed", msg, { error: err, stack: err instanceof Error ? err.stack : undefined });
     }
   };
 
@@ -160,6 +171,11 @@ export function SettingsScreen({
     setClearingProfile(true);
     try {
       await onClearProfileData(`workspace_${activeWorkspaceId}`);
+      devConsole.settings("info", "Workspace Profile Reset", `Profile workspace_${activeWorkspaceId} cleared`, { entity: "settings", profile: activeWorkspaceId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      devConsole.settings("error", "Workspace Reset Failed", msg, { error: err, stack: err instanceof Error ? err.stack : undefined, profile: activeWorkspaceId });
+      throw err;
     } finally {
       setClearingProfile(false);
     }

@@ -203,6 +203,39 @@ pub fn aegis_navigation_plugin(
         return false;
       }
 
+      // Browsed website JS / console errors forwarded to Dev Console (webview category)
+      if url_string.starts_with("sx-internal://webview-log") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          let mut level = String::from("error");
+          let mut title = String::from("WebView Error");
+          let mut message = String::new();
+          let mut stack = String::new();
+          let mut url_param = String::new();
+          let mut filename = String::new();
+          for (k, v) in parsed.query_pairs() {
+            match k.as_ref() {
+              "level" => level = v.to_string(),
+              "title" => title = v.to_string(),
+              "message" => message = v.to_string(),
+              "stack" => stack = v.to_string(),
+              "url" => url_param = v.to_string(),
+              "filename" => filename = v.to_string(),
+              _ => {}
+            }
+          }
+          let _ = window.emit_to("main", "Aegis-webview-log", serde_json::json!({
+            "level": level,
+            "title": title,
+            "message": message,
+            "stack": stack,
+            "url": url_param,
+            "filename": filename,
+            "label": label
+          }));
+        }
+        return false;
+      }
+
       // Netflix extension toggle from injected floating panel
       if url_string.starts_with("sx-internal://netflix-toggle") {
         if let Ok(parsed) = url::Url::parse(&url_string) {

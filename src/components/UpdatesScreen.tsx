@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { Check, Download, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { devConsole } from "../services/devConsole";
 
 import packageJson from "../../package.json";
 
@@ -30,7 +31,10 @@ export function UpdatesScreen() {
     try {
       const version = await getVersion();
       if (version) setCurrentVersion(version);
-    } catch {
+      devConsole.updates("info", "Update Version Resolved", `Current version: ${version || packageJson.version}`, { version });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      devConsole.updates("warn", "Get Version Fallback", `Failed to resolve Tauri version, using package.json fallback: ${msg}`, { error: msg, stack: err instanceof Error ? err.stack : undefined });
       // Fallback to package.json version
     }
 
@@ -38,6 +42,11 @@ export function UpdatesScreen() {
       const availableUpdate = await check();
       setUpdate(availableUpdate);
       setState(availableUpdate ? "available" : "current");
+      if (availableUpdate) {
+        devConsole.updates("info", "Update Available", `Update ${availableUpdate.version} available (current ${currentVersion})`, { available: availableUpdate.version, current: currentVersion });
+      } else {
+        devConsole.updates("info", "Up To Date", `Aegis ${currentVersion} is current — no update found`, { current: currentVersion });
+      }
     } catch (reason) {
       setUpdate(null);
       setState("error");
@@ -57,6 +66,7 @@ export function UpdatesScreen() {
       }
 
       setError(message);
+      devConsole.updates("error", "Update Check Failed", message, { error: reason, stack: reason instanceof Error ? reason.stack : undefined });
     }
   };
 
@@ -80,7 +90,30 @@ export function UpdatesScreen() {
       });
     } catch (reason) {
       setState("error");
-      setError(reason instanceof Error ? reason.message : "The update could not be installed.");
+      let msg = reason instanceof Error ? reason.message : String(reason) || "The update could not be installed.";
+      const isSigMismatch = msg.toLowerCase().includes("different key") || msg.toLowerCase().includes("signature");
+      if (isSigMismatch) {
+        msg =
+          "Signature mismatch: The update was signed with a different private key than this build's public key. " +
+          "Fixed in tauri.conf.json (RWRr → RWSr) for next release — this installed build (v" +
+          currentVersion +
+          ") must be reinstalled manually from GitHub Releases. Download the latest MSI/NSIS and run it; future auto-updates will work.";
+        devConsole.updates(
+          "error",
+          "Update Install Failed — PubKey Mismatch (Manual Reinstall Required)",
+          msg,
+          {
+            error: reason,
+            stack: reason instanceof Error ? reason.stack : undefined,
+            hint: "tauri.conf.json pubkey was RWRrPKyp... but release was signed with RWSrPKyp... (aegis.key.pub). Corrected to RWSr for next build. Current binary needs manual reinstall.",
+            currentPubkey: "RWSrPKypWBaPnHLnlpPBmcwV0aGIkj3+mFIWMnckYHf/oYla6Mz6vu+J (9C8F1658A9AC3CAB)",
+            recoveryUrl: "https://github.com/Leewoii/Aegis-Browser/releases/latest",
+          },
+        );
+      } else {
+        devConsole.updates("error", "Update Install Failed", msg, { error: reason, stack: reason instanceof Error ? reason.stack : undefined });
+      }
+      setError(msg);
     }
   };
 
@@ -107,7 +140,21 @@ export function UpdatesScreen() {
 
       {state === "checking" && <p className="updates-status"><RefreshCw size={15} className="updates-spin" /> Checking for updates...</p>}
       {state === "current" && <p className="updates-status success"><Check size={16} /> Aegis is up to date.</p>}
-      {state === "error" && <p className="updates-status error">{error}</p>}
+      {state === "error" && (
+        <div className="updates-error-block">
+          <p className="updates-status error">{error}</p>
+          {error.includes("Signature mismatch") && (
+            <a
+              href="https://github.com/Leewoii/Aegis-Browser/releases/latest"
+              target="_blank"
+              rel="noreferrer"
+              className="updates-manual-link"
+            >
+              Open GitHub Releases to download manually →
+            </a>
+          )}
+        </div>
+      )}
 
       {update && state !== "checking" && (
         <div className="updates-release">

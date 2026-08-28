@@ -859,6 +859,30 @@ export default function App() {
       });
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
+    // Browsed website errors forwarded from child webviews (injection.rs -> webview-log -> Rust)
+    void listen<{
+      level: string;
+      title: string;
+      message: string;
+      stack?: string;
+      url?: string;
+      filename?: string;
+      label?: string;
+    }>("Aegis-webview-log", (event) => {
+      if (disposed) return;
+      const p = event.payload || ({} as any);
+      const lvl = p.level === "warn" ? "warn" : "error";
+      devConsole.webview({
+        level: lvl as "warn" | "error",
+        title: p.title || "WebView Error",
+        message: p.message || "Unknown webview error",
+        url: p.url || p.filename || "",
+        label: p.label,
+        stack: p.stack,
+        details: { filename: p.filename, label: p.label, url: p.url },
+      });
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+
     return () => {
       disposed = true;
       for (const fn of cleanups) fn();
@@ -1359,10 +1383,12 @@ export default function App() {
       if (activeTab.kind === "web") {
         await recreateTabWebview(activeTab);
       }
+      devConsole.settings("info", "Workspace Profile Reset", `Profile ${profileKey} cleared via Rust`, { profileKey });
       showToast("Workspace profile reset successfully", "success");
     } catch (err: unknown) {
       console.error("Failed to clear profile data:", err);
       const errMsg = err instanceof Error ? err.message : String(err);
+      devConsole.settings("error", "Workspace Profile Clear Failed", errMsg, { profileKey, error: err, stack: err instanceof Error ? err.stack : undefined });
       showToast(`Wipe failed: ${errMsg}`, "error");
     }
   }

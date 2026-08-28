@@ -7,7 +7,7 @@
  * - Persistence & session state transitions (UI state -> In-Memory -> DB Committed -> DB Failed -> Re-fetch)
  */
 
-export type LogCategory = "frontend" | "api" | "database" | "persistence";
+export type LogCategory = "frontend" | "api" | "database" | "persistence" | "webview";
 export type LogLevel = "info" | "warn" | "error" | "success";
 export type DataFlowStage =
   | "ui"
@@ -46,7 +46,10 @@ export type DevLogEntry = {
     | "vault"
     | "session"
     | "network"
-    | "system";
+    | "system"
+    | "webview"
+    | "updates"
+    | "website";
   durationMs?: number;
   sqlQuery?: string;
   sqlParams?: unknown[];
@@ -309,6 +312,63 @@ class DevConsoleManager {
       level,
       title,
       message,
+      stage: "ui",
+      details,
+      stack,
+    });
+  }
+
+  public webview(params: {
+    level: LogLevel;
+    title: string;
+    message: string;
+    url?: string;
+    label?: string;
+    stack?: string;
+    details?: unknown;
+  }): void {
+    this.log({
+      id: uid(),
+      timestamp: Date.now(),
+      timeFormatted: formatTimestamp(),
+      category: "webview",
+      level: params.level,
+      title: params.label ? `[${params.label}] ${params.title}` : params.title,
+      message: params.message,
+      url: params.url,
+      stack: params.stack,
+      entity: "webview",
+      stage: "ui",
+      details: { label: params.label, ...(params.details as Record<string, unknown> | undefined) },
+    });
+  }
+
+  public updates(level: LogLevel, title: string, message: string, details?: unknown, stack?: string): void {
+    this.log({
+      id: uid(),
+      timestamp: Date.now(),
+      timeFormatted: formatTimestamp(),
+      category: "frontend",
+      level,
+      title,
+      message,
+      entity: "updates",
+      stage: "api_backend",
+      details,
+      stack,
+    });
+  }
+
+  public settings(level: LogLevel, title: string, message: string, details?: unknown, stack?: string): void {
+    this.log({
+      id: uid(),
+      timestamp: Date.now(),
+      timeFormatted: formatTimestamp(),
+      category: "frontend",
+      level,
+      title,
+      message,
+      entity: "settings",
       stage: "ui",
       details,
       stack,

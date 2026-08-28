@@ -301,6 +301,68 @@ const INTERCEPTION_SCRIPT: &str = r#"
   document.addEventListener('click', sxNotifyActivity, true);
   document.addEventListener('touchstart', sxNotifyActivity, true);
 
+  // 5b. Forward browsed-website JS errors / console to Dev Console (webview category)
+  function sxReportWebviewLog(level, title, message, stack, filename) {
+    try {
+      var url = window.location.href || '';
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://webview-log?level=' + encodeURIComponent(level || 'error')
+        + '&title=' + encodeURIComponent(title || 'WebView Error')
+        + '&message=' + encodeURIComponent(message || '')
+        + '&stack=' + encodeURIComponent(stack || '')
+        + '&url=' + encodeURIComponent(url)
+        + '&filename=' + encodeURIComponent(filename || '')
+        + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function(){ if(a && a.parentNode) a.parentNode.removeChild(a); }, 80);
+    } catch(_) {}
+  }
+
+  window.addEventListener('error', function(e) {
+    try {
+      var msg = e.message || 'Unhandled WebView exception';
+      var stk = e.error && e.error.stack ? e.error.stack : '';
+      sxReportWebviewLog('error', 'Unhandled WebView Exception', msg, stk, e.filename || '');
+    } catch(_) {}
+  });
+
+  window.addEventListener('unhandledrejection', function(e) {
+    try {
+      var reason = e.reason;
+      var msg = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : (function(){ try{ return JSON.stringify(reason); }catch(_){ return String(reason); } })();
+      var stk = reason instanceof Error ? (reason.stack || '') : '';
+      sxReportWebviewLog('error', 'Unhandled Promise Rejection', msg || 'rejection', stk, '');
+    } catch(_) {}
+  }, true);
+
+  (function(){
+    try {
+      var origConsoleError = console.error;
+      console.error = function() {
+        try { origConsoleError.apply(console, arguments); } catch(_) {}
+        try {
+          var msg = Array.prototype.slice.call(arguments).map(function(a){
+            try { return a instanceof Error ? a.message : typeof a === 'object' ? JSON.stringify(a) : String(a); } catch(_) { return String(a); }
+          }).join(' ');
+          var stk = arguments[0] instanceof Error ? (arguments[0].stack || '') : '';
+          sxReportWebviewLog('error', 'Console Error', msg.slice(0,1200), stk, '');
+        } catch(_) {}
+      };
+      var origConsoleWarn = console.warn;
+      console.warn = function() {
+        try { origConsoleWarn.apply(console, arguments); } catch(_) {}
+        try {
+          var msg = Array.prototype.slice.call(arguments).map(function(a){
+            try { return typeof a === 'object' ? JSON.stringify(a) : String(a); } catch(_) { return String(a); }
+          }).join(' ');
+          sxReportWebviewLog('warn', 'Console Warning', msg.slice(0,1200), '', '');
+        } catch(_) {}
+      };
+    } catch(_) {}
+  })();
+
   // 6. Forward browser keyboard shortcuts to the main Aegis window.
   //    When the child webview has focus, key events never reach the React layer.
   //    We intercept them here and signal Aegis via sx-internal://.
