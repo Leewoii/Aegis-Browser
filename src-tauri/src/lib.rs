@@ -52,5 +52,5 @@ pub fn run() {
       terminal::execute_command
     ])
     .run(tauri::generate_context!())
-    .expect("error while running Aegis Browser");
+    .expect("error while running Aegis");
 }

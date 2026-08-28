@@ -91,7 +91,7 @@ export function UpdatesScreen() {
       <div className="updates-card">
         <div className="updates-hero-icon"><ShieldCheck size={27} strokeWidth={1.7} /></div>
         <div>
-          <p className="updates-eyebrow">Aegis Browser</p>
+          <p className="updates-eyebrow">Aegis</p>
           <h1>Application updates</h1>
           <p className="updates-copy">Secure, signed updates are installed through the official Aegis release channel.</p>
         </div>
@@ -106,7 +106,7 @@ export function UpdatesScreen() {
       </div>
 
       {state === "checking" && <p className="updates-status"><RefreshCw size={15} className="updates-spin" /> Checking for updates...</p>}
-      {state === "current" && <p className="updates-status success"><Check size={16} /> Aegis Browser is up to date.</p>}
+      {state === "current" && <p className="updates-status success"><Check size={16} /> Aegis is up to date.</p>}
       {state === "error" && <p className="updates-status error">{error}</p>}
 
       {update && state !== "checking" && (

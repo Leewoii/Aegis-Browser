@@ -205,7 +205,7 @@ export function SettingsScreen({
           </button>
 
           <div className="settings-nav-foot">
-            <span>Aegis Browser</span>
+            <span>Aegis</span>
             <span className="settings-workspace-dot" />
             <span>{settings.searchEngine}</span>
           </div>

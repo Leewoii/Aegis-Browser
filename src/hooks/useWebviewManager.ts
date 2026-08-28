@@ -26,6 +26,8 @@ interface WebviewManagerOptions {
   getSplitTabs?: () => SplitActiveTabs;
   activePanelRef: React.MutableRefObject<PanelId | null>;
   isOverlayActiveRef?: React.MutableRefObject<boolean>;
+  isPanelPinnedRef?: React.MutableRefObject<boolean>;
+  panelWidthRef?: React.MutableRefObject<number>;
   showToast: (message: string, type?: ToastType) => void;
 }
 
@@ -66,6 +68,8 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     getSplitTabs,
     activePanelRef,
     isOverlayActiveRef,
+    isPanelPinnedRef,
+    panelWidthRef,
     showToast,
   } = options;
 
@@ -266,14 +270,21 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       if (splitTabs && splitLeftRef?.current && splitRightRef?.current) {
         const leftRect  = splitLeftRef.current.getBoundingClientRect();
         const rightRect = splitRightRef.current.getBoundingClientRect();
+        const splitOverlay = activePanelRef.current !== null && isPanelPinnedRef?.current === false && (panelWidthRef?.current ?? 0) > 0;
+        const splitOverlayW = splitOverlay ? panelWidthRef!.current : 0;
 
-        const syncPane = async (paneTab: Tab, rect: DOMRect) => {
+        const syncPane = async (paneTab: Tab, rect: DOMRect, isLeftPane: boolean) => {
           if (rect.width <= 0 || rect.height <= 0) return;
           const RESIZE_INSET_SPLIT = 4;
-          const l = Math.ceil(rect.left);
+          let l = Math.ceil(rect.left);
           const t = Math.ceil(rect.top);
-          const w = Math.max(0, Math.floor(rect.right) - l - RESIZE_INSET_SPLIT);
+          let w = Math.max(0, Math.floor(rect.right) - l - RESIZE_INSET_SPLIT);
           const h = Math.max(0, Math.floor(rect.bottom) - t - RESIZE_INSET_SPLIT);
+          // When Tools & AI panel overlays the split viewport, inset the leftmost pane so HTML panel isn't covered by native webviews
+          if (splitOverlay && isLeftPane) {
+            l += splitOverlayW;
+            w = Math.max(0, w - splitOverlayW);
+          }
           if (w <= 0 || h <= 0) return;
 
           const wv = tabWebviewsRef.current[paneTab.id];
@@ -298,8 +309,8 @@ export function useWebviewManager(options: WebviewManagerOptions) {
           }
         };
 
-        await syncPane(splitTabs.left,  leftRect);
-        await syncPane(splitTabs.right, rightRect);
+        await syncPane(splitTabs.left,  leftRect, true);
+        await syncPane(splitTabs.right, rightRect, false);
         await syncPanelWebview();
         return;
       }
@@ -322,10 +333,20 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       // Inset 4px from window's right/bottom edges so HTML resize handles remain hit-testable
       // (native webview would otherwise cover them, making bottom/right resizing impossible)
       const RESIZE_INSET = 4;
-      const left = Math.ceil(rect.left);
+      let left = Math.ceil(rect.left);
       const top = Math.ceil(rect.top);
-      const width = Math.max(0, Math.floor(rect.right) - left - RESIZE_INSET);
+      let width = Math.max(0, Math.floor(rect.right) - left - RESIZE_INSET);
       const height = Math.max(0, Math.floor(rect.bottom) - top - RESIZE_INSET);
+
+      // If Tools & AI side panel is open as overlay (unpinned), it sits on top of the viewport.
+      // Native tab webviews are HWND child windows that render above HTML regardless of z-index,
+      // so without insetting the webview would paint over the HTML side panel and appear "behind" it.
+      const panelIsOverlay = activePanelRef.current !== null && isPanelPinnedRef?.current === false && (panelWidthRef?.current ?? 0) > 0;
+      if (panelIsOverlay) {
+        const overlayW = panelWidthRef!.current;
+        left += overlayW;
+        width = Math.max(0, width - overlayW);
+      }
 
       if (width <= 0 || height <= 0) {
         await syncPanelWebview();

@@ -552,7 +552,7 @@
   border-right: 1px solid var(--border-subtle);
   border-left: none;
   box-shadow: 8px 0 32px rgba(0, 0, 0, 0.35);
-  z-index: 24;
+  z-index: 35;
   overflow: hidden;
   will-change: left, width;
   transform: translateZ(0);

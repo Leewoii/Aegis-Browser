@@ -340,6 +340,10 @@ export default function App() {
   const isOverlayActive = Boolean(query.trim() || isCreateWorkspaceOpen);
   const isOverlayActiveRef = useRef(isOverlayActive);
   isOverlayActiveRef.current = isOverlayActive;
+  // Keep panel width ref in sync for webview inset calculations
+  useEffect(() => {
+    panelWidthRef.current = panelWidth;
+  }, [panelWidth]);
 
   // ── Webview manager ───────────────────────────────────────────────
   const {
@@ -369,6 +373,8 @@ export default function App() {
     },
     activePanelRef,
     isOverlayActiveRef,
+    isPanelPinnedRef,
+    panelWidthRef,
     showToast,
   });
 
@@ -912,7 +918,7 @@ export default function App() {
   // ── Document chrome ───────────────────────────────────────────────
 
   useEffect(() => {
-    document.title = `Aegis Browser - ${activeTab.title}`;
+    document.title = `Aegis - ${activeTab.title}`;
   }, [activeTab.title]);
 
   useEffect(() => {

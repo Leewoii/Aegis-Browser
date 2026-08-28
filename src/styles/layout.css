@@ -640,7 +640,7 @@ html.is-maximized .window-resize-handle,
   left: 0;
   top: 0;
   bottom: 0;
-  z-index: 25;
+  z-index: 36;
   width: var(--sidebar-visual-w);
   background: var(--bg-sidebar);
   border-right: none;
