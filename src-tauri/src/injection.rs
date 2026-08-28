@@ -274,7 +274,34 @@ const INTERCEPTION_SCRIPT: &str = r#"
   window.addEventListener('resize', removeContextMenu, true);
   window.addEventListener('blur', removeContextMenu, true);
 
-  // 5. Forward browser keyboard shortcuts to the main Aegis window.
+  // 5. Activity notification to parent window (click/pointerdown in webview) — auto-hide unpinned sidepanel/sidebar
+  var sxLastNotify = 0;
+  function sxNotifyActivity() {
+    var now = Date.now();
+    if (now - sxLastNotify < 150) return;
+    sxLastNotify = now;
+    try {
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://user-click?' + now;
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function() {
+        if (a && a.parentNode) a.parentNode.removeChild(a);
+      }, 50);
+    } catch(_) {}
+  }
+
+  window.addEventListener('pointerdown', sxNotifyActivity, true);
+  window.addEventListener('mousedown', sxNotifyActivity, true);
+  window.addEventListener('click', sxNotifyActivity, true);
+  window.addEventListener('touchstart', sxNotifyActivity, true);
+  document.addEventListener('pointerdown', sxNotifyActivity, true);
+  document.addEventListener('mousedown', sxNotifyActivity, true);
+  document.addEventListener('click', sxNotifyActivity, true);
+  document.addEventListener('touchstart', sxNotifyActivity, true);
+
+  // 6. Forward browser keyboard shortcuts to the main Aegis window.
   //    When the child webview has focus, key events never reach the React layer.
   //    We intercept them here and signal Aegis via sx-internal://.
   function sxSignal(action) {
@@ -326,7 +353,7 @@ const INTERCEPTION_SCRIPT: &str = r#"
     }
   }, true);
 
-  // 6. Notify main window of document title for history / tab title.
+  // 7. Notify main window of document title for history / tab title.
   function sxNotifyTitle() {
     try {
       var t = (document.title || '').trim();
