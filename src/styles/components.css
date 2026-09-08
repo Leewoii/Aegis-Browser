@@ -546,9 +546,7 @@
   flex-direction: column;
   width: var(--panel-w);
   height: 100%;
-  background: var(--bg-sidebar);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  background: var(--bg-window);
   border-right: 1px solid var(--border-subtle);
   border-left: none;
   box-shadow: 8px 0 32px rgba(0, 0, 0, 0.35);
@@ -583,6 +581,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px 10px;
+  background: var(--bg-window);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .panel-title {
@@ -627,6 +628,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  background: var(--bg-window);
+  overflow: hidden;
 }
 
 .panel-webview-container {
@@ -1489,6 +1492,7 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
+  background: var(--bg-window);
 }
 
 .list-panel-header {
