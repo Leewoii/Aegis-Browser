@@ -8,6 +8,7 @@ import type { PanelId, Tab, ToastType } from "../types";
 import { isWebAppPanel } from "../types";
 import { WEB_APP_PANELS } from "../constants/webApps";
 import { debugLog } from "../services/debug";
+import { devConsole } from "../services/devConsole";
 
 const RESIZE_RAF_DEBOUNCE = 0;
 
@@ -50,8 +51,10 @@ async function waitForWebviewCreated(view: Webview, retries = 3): Promise<void> 
       if (attempt < retries - 1) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 5000);
         console.warn(`Webview creation attempt ${attempt + 1} failed, retrying in ${delay}ms:`, err);
+        devConsole.frontend("warn", `Webview Create Retry ${attempt + 1}`, String(err), { attempt: attempt + 1, delay, error: err }, err instanceof Error ? err.stack : undefined);
         await new Promise((r) => setTimeout(r, delay));
       } else {
+        devConsole.frontend("error", "Webview Create Failed", String(err), { retries, error: err }, err instanceof Error ? err.stack : undefined);
         throw err;
       }
     }
@@ -102,6 +105,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       await debugLog(`[DEBUG H3] destroyTabWebview failed tabId=${tabId} err=${err instanceof Error ? err.message : String(err)}`);
       // #endregion DEBUG
       console.error("Failed to close webview for tab", tabId, err);
+      devConsole.frontend("error", "Destroy WebView Failed", String(err), { tabId, error: err }, err instanceof Error ? err.stack : undefined);
     }
   }, []);
 
@@ -142,6 +146,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       await debugLog(`[DEBUG H3] createTabWebview failed tabId=${tab.id} label=${tab.label} err=${err instanceof Error ? err.message : String(err)}`);
       // #endregion DEBUG
       console.error("Failed to create webview for tab", tab.id, err);
+      devConsole.frontend("error", "Create WebView Failed", String(err), { tabId: tab.id, label: tab.label, url: tab.url, error: err }, err instanceof Error ? err.stack : undefined);
       showToast(`Failed to load ${tab.title}`, "error");
     } finally {
       creatingTabIdsRef.current.delete(tab.id);
@@ -159,6 +164,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
       await current.close();
     } catch (err) {
       console.error("Failed to close panel webview:", err);
+      devConsole.frontend("error", "Destroy Panel WebView Failed", String(err), { error: err }, err instanceof Error ? err.stack : undefined);
     }
   }, []);
 
@@ -301,10 +307,14 @@ export function useWebviewManager(options: WebviewManagerOptions) {
                 lastLoadedUrlRef.current[paneTab.id] = paneTab.url;
                 void invoke("allow_navigation", { label: paneTab.label, url: paneTab.url })
                   .then(() => invoke("navigate_webview", { label: paneTab.label, url: paneTab.url }))
-                  .catch((err) => console.error("Split navigation error:", err));
+                  .catch((err) => {
+                    console.error("Split navigation error:", err);
+                    devConsole.frontend("error", "Split Navigation Failed", String(err), { label: paneTab.label, url: paneTab.url, error: err }, err instanceof Error ? err.stack : undefined);
+                  });
               }
             } catch (err) {
               console.error("Failed to reposition split webview:", err);
+              devConsole.frontend("error", "Reposition Split WebView Failed", String(err), { error: err }, err instanceof Error ? err.stack : undefined);
             }
           }
         };
@@ -366,10 +376,14 @@ export function useWebviewManager(options: WebviewManagerOptions) {
             lastLoadedUrlRef.current[tab.id] = tab.url;
             void invoke("allow_navigation", { label: tab.label, url: tab.url })
               .then(() => invoke("navigate_webview", { label: tab.label, url: tab.url }))
-              .catch((err) => console.error("Tab navigation error:", err));
+              .catch((err) => {
+                console.error("Tab navigation error:", err);
+                devConsole.frontend("error", "Tab Navigation Failed", String(err), { label: tab.label, url: tab.url, error: err }, err instanceof Error ? err.stack : undefined);
+              });
           }
         } catch (err) {
           console.error("Failed to reposition webview:", err);
+          devConsole.frontend("error", "Reposition WebView Failed", String(err), { error: err }, err instanceof Error ? err.stack : undefined);
         }
       }
 

@@ -620,6 +620,14 @@ export default function App() {
           await debugLog(`[DEBUG H1] flush saveTabs failed: ${error instanceof Error ? error.message : String(error)}`);
           // #endregion DEBUG
           console.error("Failed to flush tabs before close:", error);
+          devConsole.persistence({
+            entity: "tabs",
+            state: "db_failed",
+            stage: "database",
+            action: "FLUSH_TABS_ON_CLOSE",
+            description: `Failed to flush tabs before close: ${error instanceof Error ? error.message : String(error)}`,
+            error: error as Error,
+          });
         }
 
         try {
@@ -629,6 +637,7 @@ export default function App() {
           await debugLog(`[DEBUG H1] close finalizer failed: ${error instanceof Error ? error.message : String(error)}`);
           // #endregion DEBUG
           console.error("Failed to close window after flush:", error);
+          devConsole.system("Window Close Failed", String(error), { error });
         }
       })
       .then((cleanup) => {
@@ -705,6 +714,7 @@ export default function App() {
         setIsPanelPinned(true);
       } catch (e) {
         console.error("Failed to handle download", e);
+        devConsole.frontend("error", "Download Handle Failed", String(e), { url, error: e }, e instanceof Error ? e.stack : undefined);
       }
     }).then((cleanup) => {
       if (disposed) cleanup();
@@ -1038,6 +1048,7 @@ export default function App() {
     if (tab) {
       void invoke("navigate_webview", { label: tab.label, url }).catch((err: unknown) => {
         console.error("Failed to navigate webview:", err);
+        devConsole.frontend("error", "Navigate WebView Failed", String(err), { label: tab.label, url, error: err }, err instanceof Error ? err.stack : undefined);
       });
     }
     scheduleSyncActive();
@@ -1058,9 +1069,12 @@ export default function App() {
           : item,
       ),
     );
-    void invoke("allow_navigation", { label: tab.label, url: nextUrl }).catch(() => undefined);
+    void invoke("allow_navigation", { label: tab.label, url: nextUrl }).catch((e) => {
+      devConsole.frontend("warn", "Allow Navigation Failed", String(e), { label: tab.label, url: nextUrl, error: e });
+    });
     void invoke("navigate_webview", { label: tab.label, url: nextUrl }).catch((err: unknown) => {
       console.error(`Failed to navigate ${direction < 0 ? "back" : "forward"}:`, err);
+      devConsole.frontend("error", `Navigate ${direction < 0 ? "Back" : "Forward"} Failed`, String(err), { label: tab.label, url: nextUrl, error: err }, err instanceof Error ? err.stack : undefined);
     });
     setTimeout(() => void scheduleSyncActive(), 50);
   }
@@ -1075,7 +1089,8 @@ export default function App() {
     setIsLoading(true);
     void invoke("allow_navigation", { label: tab.label, url: tab.url })
       .then(() => invoke("navigate_webview", { label: tab.label, url: tab.url }))
-      .catch(() => {
+      .catch((err) => {
+        devConsole.frontend("error", "Reload Failed", String(err), { label: tab.label, url: tab.url, error: err }, err instanceof Error ? err.stack : undefined);
         showToast("Reload failed, recreating view", "error");
         void recreateTabWebview(tab);
       })
@@ -1591,6 +1606,7 @@ export default function App() {
         }
       } catch (err) {
         console.error("Context menu popup error:", err);
+        devConsole.frontend("error", "Context Menu Failed", String(err), { error: err }, err instanceof Error ? err.stack : undefined);
       }
     },
     [tabGroups, activeTabId, activeWorkspaceId, tabs, visibleTabs],
@@ -1650,7 +1666,10 @@ export default function App() {
       void invoke("set_webview_muted", {
         label: `Aegis-panel-${panel}`,
         muted: next.has(panel),
-      }).catch((err: unknown) => console.error("Failed to toggle mute:", err));
+      }).catch((err: unknown) => {
+        console.error("Failed to toggle mute:", err);
+        devConsole.frontend("error", "Toggle Mute Failed", String(err), { panel, error: err }, err instanceof Error ? err.stack : undefined);
+      });
       return next;
     });
   }
@@ -2039,8 +2058,8 @@ export default function App() {
                         t.id === splitLeftTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: titleFromUrl(url) } : t
                       ));
                       recordHistory(url, titleFromUrl(url));
-                      void invoke("allow_navigation", { label: splitLeftTab.label, url }).catch(() => undefined);
-                      void invoke("navigate_webview", { label: splitLeftTab.label, url }).catch(() => undefined);
+                      void invoke("allow_navigation", { label: splitLeftTab.label, url }).catch((e) => devConsole.frontend("warn", "Split Left Allow Navigation Failed", String(e), { label: splitLeftTab.label, url }));
+                      void invoke("navigate_webview", { label: splitLeftTab.label, url }).catch((e) => devConsole.frontend("error", "Split Left Navigate Failed", String(e), { label: splitLeftTab.label, url, error: e }));
                       scheduleSyncActive();
                     }}
                     suggestions={splitState.activeSide === "left" ? suggestions : []}

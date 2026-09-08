@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { DownloadEntry } from "../types";
+import { devConsole } from "./devConsole";
 import {
   upsertDownload,
   pauseDownload as pauseDownloadInDb,
@@ -125,6 +126,7 @@ class DownloadManager {
       const target = this.downloads.find((d) => d.id === id);
       if (!target) return;
       console.error("Download error", id, error);
+      devConsole.frontend("error", "Download Failed", error, { id, url: target.url, filename: target.filename, error });
       target.state = "failed";
       target.completed = false;
       target.speed = 0;
@@ -231,6 +233,7 @@ class DownloadManager {
             return;
           }
           console.error("start_download failed", err);
+          devConsole.frontend("error", "Start Download Failed", String(err), { id: target.id, url: target.url, error: err }, err instanceof Error ? err.stack : undefined);
           target.state = "failed";
           target.completed = false;
           target.speed = 0;

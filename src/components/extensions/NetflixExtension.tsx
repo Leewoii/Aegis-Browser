@@ -4,6 +4,7 @@ import { Menu, MenuItem, PredefinedMenuItem } from "@tauri-apps/api/menu";
 import { NetflixIcon } from "../Icons";
 import type { Tab } from "../../types";
 import type { NetflixExtensionSettings } from "../../services/storage";
+import { devConsole } from "../../services/devConsole";
 
 interface NetflixExtensionProps {
   tabs: Tab[];
@@ -258,6 +259,7 @@ export function NetflixExtension({ tabs, activeTab, settings, onChange }: Netfli
         return;
       } catch (err) {
         console.error("[NetflixExtension] panel inject failed, fallback to menu", err);
+        devConsole.frontend("error", "Netflix Panel Inject Failed", String(err), { label, error: err }, err instanceof Error ? err.stack : undefined);
       }
     }
     // Fallback: native menu when not on a web tab (home/settings etc.) or inject failed
@@ -280,6 +282,7 @@ export function NetflixExtension({ tabs, activeTab, settings, onChange }: Netfli
       await menu.popup();
     } catch (err) {
       console.error("[NetflixExtension] menu failed", err);
+      devConsole.frontend("error", "Netflix Menu Failed", String(err), { error: err }, err instanceof Error ? err.stack : undefined);
     }
   };
 
