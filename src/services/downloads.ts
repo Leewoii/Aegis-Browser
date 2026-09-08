@@ -116,6 +116,8 @@ class DownloadManager {
         target.destination = dest;
         this.notify();
         void upsertDownload({ ...target });
+        // IDM-style: try to start next queued item
+        this.dequeueAndStartNext();
       },
     );
     void listen<{ id: string; error: string }>("download-error", (e) => {
@@ -129,6 +131,7 @@ class DownloadManager {
       this.speedTracking.delete(id);
       this.notify();
       void upsertDownload({ ...target });
+      this.dequeueAndStartNext();
     });
     void listen<{ id: string }>("download-cancelled", (e) => {
       const { id } = e.payload;
@@ -139,12 +142,54 @@ class DownloadManager {
       this.speedTracking.delete(id);
       this.notify();
       void upsertDownload({ ...target });
+      this.dequeueAndStartNext();
     });
+    void listen<{ id: string }>("download-paused", (e) => {
+      const { id } = e.payload;
+      const target = this.downloads.find((d) => d.id === id);
+      if (!target) return;
+      target.state = "paused";
+      target.speed = 0;
+      this.speedTracking.delete(id);
+      this.notify();
+      void upsertDownload({ ...target });
+    });
+  }
+
+  private maxConcurrent = 3;
+  private pendingQueue: string[] = [];
+
+  private canStartImmediately(): boolean {
+    const active = this.downloads.filter((d) => d.state === "in_progress").length;
+    return active < this.maxConcurrent;
+  }
+
+  private dequeueAndStartNext() {
+    if (this.pendingQueue.length === 0) return;
+    if (!this.canStartImmediately()) return;
+    const nextId = this.pendingQueue.shift();
+    if (!nextId) return;
+    const target = this.downloads.find((d) => d.id === nextId);
+    if (target && target.state === "paused") {
+      this.startOrResume(nextId);
+    }
   }
 
   public startOrResume(id: string) {
     const target = this.downloads.find((d) => d.id === id);
     if (!target) return;
+
+    // IDM-style queue: if at max concurrency, enqueue and pause
+    if (!this.canStartImmediately() && target.state !== "in_progress") {
+      if (!this.pendingQueue.includes(id)) {
+        this.pendingQueue.push(id);
+        target.state = "paused";
+        this.notify();
+        void upsertDownload({ ...target });
+        // ensure listeners and mark as queued (paused) until slot frees
+        return;
+      }
+    }
 
     const existingTimer = this.activeTimers.get(id);
     if (existingTimer) {
@@ -152,6 +197,8 @@ class DownloadManager {
       this.activeTimers.delete(id);
     }
 
+    const prevState = target.state;
+    const wasPaused = prevState === "paused" || target.receivedBytes > 0;
     target.state = "in_progress";
     target.completed = false;
     void resumeDownloadInDb(id);
@@ -160,8 +207,14 @@ class DownloadManager {
     this.ensureTauriListeners();
 
     if (isTauri()) {
-      // Real download via Rust
-      invoke<string>("start_download", { id: target.id, url: target.url })
+      // Real download via Rust — segmented engine (IDM dynamic + aria2 pieces)
+      // If this is a resume of a paused segmented download, invoke resume_download first
+      const invokeResume = wasPaused && target.receivedBytes > 0 && target.receivedBytes < target.totalBytes;
+      const startPromise = invokeResume
+        ? invoke<string>("resume_download", { id: target.id })
+            .then(() => invoke<string>("start_download", { id: target.id, url: target.url }))
+        : invoke<string>("start_download", { id: target.id, url: target.url });
+      startPromise
         .then((dest) => {
           target.destination = dest;
           void upsertDownload({ ...target });
@@ -252,7 +305,12 @@ class DownloadManager {
       target.speed = 0;
       void pauseDownloadInDb(id);
       this.notify();
+      if (isTauri()) {
+        void invoke("pause_download", { id }).catch(() => undefined);
+      }
     }
+    // free slot for queue
+    this.dequeueAndStartNext();
   }
 
   public cancel(id: string) {

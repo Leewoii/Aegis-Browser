@@ -44,6 +44,8 @@ pub fn run() {
       security::decrypt_secret,
       download::start_download,
       download::cancel_download,
+      download::pause_download,
+      download::resume_download,
       download::get_download_dir,
       terminal::create_terminal,
       terminal::write_terminal,

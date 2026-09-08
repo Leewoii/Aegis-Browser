@@ -72,6 +72,10 @@ export type DownloadEntry = {
   startedAt?: number;
   completedAt?: number;
   createdAt: number;
+  // IDM/aria2-inspired: segmented connections & queue
+  connections?: number; // current parallel connections (1-8)
+  maxConnections?: number;
+  queued?: boolean;
 };
 
 export type SidebarState = {

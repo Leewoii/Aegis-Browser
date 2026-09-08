@@ -35,6 +35,7 @@ export function DownloadsPanel({
 }: DownloadsPanelProps) {
   const getStateBadge = (dl: DownloadEntry) => {
     const state = dl.state || (dl.completed ? "completed" : "in_progress");
+    const conn = (dl as any).connections || (state === "in_progress" && dl.totalBytes > 2 * 1024 * 1024 ? 8 : 1);
     switch (state) {
       case "completed":
         return (
@@ -45,13 +46,13 @@ export function DownloadsPanel({
       case "in_progress":
         return (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#3b82f6", fontSize: 11 }}>
-            <Clock size={12} /> Downloading
+            <Clock size={12} /> {conn > 1 ? `${conn}× seg` : "Downloading"}
           </span>
         );
       case "paused":
         return (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#f59e0b", fontSize: 11 }}>
-            <Pause size={12} /> Paused
+            <Pause size={12} /> {(dl as any).queued ? "Queued" : "Paused"}
           </span>
         );
       case "failed":

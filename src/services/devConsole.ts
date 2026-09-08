@@ -197,7 +197,7 @@ class DevConsoleManager {
       }
     };
 
-    // 4. Intercept window.fetch for network diagnostics
+    // 4. Intercept window.fetch for network diagnostics — ignore Tauri internal IPC
     const originalFetch = window.fetch;
     window.fetch = async (...args: Parameters<typeof fetch>) => {
       const startTime = performance.now();
@@ -205,6 +205,17 @@ class DevConsoleManager {
       const init = args[1];
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const method = (init?.method || "GET").toUpperCase();
+
+      // Tauri uses http://ipc.localhost for all plugin invokes (window, sql, updater, etc.)
+      // These are not real network requests and "Failed to fetch" during shutdown/transparent window is noise
+      const isInternalIpc =
+        url.includes("ipc.localhost") ||
+        url.includes("plugin%3Awindow") ||
+        url.includes("plugin:window") ||
+        url.includes("set_background_color");
+      if (isInternalIpc) {
+        return originalFetch.apply(window, args);
+      }
 
       try {
         const response = await originalFetch.apply(window, args);
