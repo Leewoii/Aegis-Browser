@@ -1,176 +1,361 @@
 # Aegis Browser
 
-A desktop browser built with Tauri 2, React 18, and Rust. Web content renders in native OS webviews, not iframes. Browser state persists locally in SQLite.
+A modern desktop browser designed to keep your browsing organized, private, and separated into dedicated workspaces.
 
-## Features
+Aegis lets you create separate environments for different parts of your life. Keep your **personal browsing, development work, cybersecurity research, and other activities** separated without needing multiple browsers.
 
-### Tabs & Workspaces
+It also includes powerful tab management, split-screen browsing, integrated web apps, resumable downloads, a built-in terminal, encrypted notes, and more.
 
-- Persistent tab sessions restored on startup (previous session or fresh home tab)
-- Tab groups with color labels and collapse state
-- Drag-and-drop tab reorder
-- Group auto-dissolve when only one tab remains
-- Close other tabs, close tabs to the right, duplicate tab
-- Closed tabs recorded for undo support
-- Three default workspaces: Personal, Development, Cybersecurity
-- Create custom workspaces with name, icon, and color
-- Workspace-specific profile directories (isolated cookies/storage per workspace)
-- Clear workspace profile data from settings
+---
 
-### Sidebar & Panels
+## Why Aegis?
 
-- Collapsible left sidebar that expands on hover or pins open
-- Docked side panels for Bookmarks, History, Downloads, Settings, and Scratchpad notes
-- Embedded web-app panels: Messenger, WhatsApp, ChatGPT, Twitch, Spotify
-- Each web-app panel runs in its own native webview with isolated profile
-- Panel resize via drag handle (220-600px)
-- Pin/unpin panels; unpinned panels auto-hide on outside click
-- Mute/unmute audio for individual web-app panels
+Most browsers treat everything as one large browsing session.
 
-### Navigation
+Aegis takes a different approach.
 
-- Back/forward per-tab history
-- Reload with fallback to webview recreation
-- Omnibox with search suggestions from history and bookmarks
-- Search engine selection: DuckDuckGo, Google, or Bing
-- Domain-like input auto-prefixed with `https://`
-- Voice search via SpeechRecognition API
-- QR code scanning from image files (jsQR)
-- Cross-origin links from any webview open in a new tab automatically
-- Same-site navigation allowed in place; redirects supported with a 5-second window
-- Sensitive URL query params (tokens, keys, passwords) redacted from logs
+You can create separate **Workspaces**, each with its own browsing environment. This means websites, logins, and browsing data from one workspace stay separate from another.
 
-### Security
+For example:
 
-- OS-level encryption on Windows via DPAPI (`CryptProtectData`/`CryptUnprotectData`)
-- Scratchpad notes stored encrypted in a local vault
-- Saved credentials stored encrypted in the same vault
-- Non-Windows builds fall back to a placeholder XOR cipher (not production-safe)
+* **Personal** — social media, shopping, personal accounts
+* **Development** — GitHub, documentation, development tools
+* **Cybersecurity** — research, labs, security tools and resources
+* **Custom** — create your own workspace for anything else
 
-### Keyboard Shortcuts
+Switching between workspaces gives you a clean environment without mixing your browsing activity together.
 
-| Shortcut | Action |
-|---|---|
-| Ctrl/Cmd+L | Focus omnibox |
-| Ctrl/Cmd+T | New tab |
-| Ctrl/Cmd+W | Close tab |
-| Ctrl/Cmd+R | Reload |
-| Alt+Left | Back |
-| Alt+Right | Forward |
+---
 
-### Context Menus
+# Features
 
-- Right-click on a tab: reload, duplicate, group, close, close others, close to the right
-- Right-click on a group: rename, ungroup, close group
-- Right-click on the page: new tab, copy page URL
-- Right-click on links inside webviews: open in new tab, open in current tab, copy link address
+## Workspaces
 
-### Settings
+Keep different parts of your digital life separated.
 
-- Three themes: Dark, AMOLED, Nord
-- Search engine preference
-- Custom home screen greeting
-- Startup behavior: restore previous session or open home tab
-- Downloads folder path
-- Ad/tracker shield toggle (UI present; blocking logic not yet implemented)
+Each workspace has its own browsing environment, allowing you to keep things such as:
 
-### Window
+* Website logins
+* Cookies
+* Browsing data
+* Local website storage
+* Website sessions
 
-- Frameless transparent window on Windows
-- Custom minimize/maximize/close buttons
-- Drag to move via title bar
-- Window size and position remembered across sessions
-- Loading bar during page loads
+separate from other workspaces.
 
-## Tech Stack
+You can also create custom workspaces with your own **name, icon, and color**.
 
-- [Tauri v2](https://tauri.app/) with native child webviews
-- React 18 + TypeScript (strict mode)
-- Vite 8
-- Rust backend with navigation gating plugin, DPAPI encryption, and IPC commands
-- SQLite via `@tauri-apps/plugin-sql`
-- lucide-react for icons
+### Example
 
-## Scripts
+You could have:
 
+**Personal → Development → Cybersecurity → Projects**
+
+and switch between them whenever you need.
+
+---
+
+## Powerful Tab Management
+
+Aegis is designed for people who regularly work with many tabs.
+
+### Tab Groups
+
+Organize related tabs into groups that can be collapsed and expanded when needed.
+
+For example:
+
+**Cybersecurity**
+
+* PortSwigger
+* Hack The Box
+* GitHub
+* OWASP
+
+**Development**
+
+* Documentation
+* Stack Overflow
+* GitHub
+* Project dashboard
+
+Tabs can be rearranged and moved between groups.
+
+### Split View
+
+Work with two websites side-by-side in the same window.
+
+Drag a tab to the side of the browser and Aegis can turn the workspace into a split view.
+
+Useful for things like:
+
+* Documentation + code
+* Research + notes
+* Video + website
+* Two dashboards
+* Comparing websites
+
+---
+
+# Built-in Web Apps
+
+Aegis can keep commonly used web applications available beside your browsing session.
+
+You can use panels for services such as:
+
+* Messenger
+* WhatsApp
+* ChatGPT
+* Twitch
+* Spotify
+
+Panels can be resized, pinned, or hidden when you do not need them.
+
+This means you can keep a conversation, music player, or other web application available without constantly switching tabs.
+
+---
+
+# Downloads Built for Large Files
+
+Aegis includes a download system designed for large and interrupted downloads.
+
+Downloads can:
+
+* Use multiple connections when supported
+* Resume after being paused
+* Continue after interruptions
+* Show download speed and progress
+* Queue multiple downloads
+* Recover unfinished downloads
+
+If a download is interrupted, Aegis can continue from where it stopped instead of starting over.
+
+---
+
+# Built-in Terminal
+
+Aegis includes an integrated terminal panel.
+
+This allows you to keep command-line tools available while browsing.
+
+For example:
+
+**Browser → Documentation → Terminal**
+
+without needing to constantly switch between separate applications.
+
+---
+
+# Notes
+
+Aegis includes a built-in notes area for keeping information while browsing.
+
+You can use it for:
+
+* Research notes
+* Temporary information
+* Development notes
+* Checklists
+* Project information
+
+Notes can be stored securely on your computer.
+
+---
+
+# Privacy
+
+Aegis is designed around keeping your browsing data on your own computer.
+
+Your workspace data is kept separately, allowing you to maintain different browsing environments without mixing their data together.
+
+You can also reset an individual workspace without affecting your other workspaces.
+
+### Local Storage
+
+Aegis stores browser state and application data locally rather than requiring a cloud account for basic browser functionality.
+
+---
+
+# Secure Vault
+
+Aegis includes a protected area for sensitive information such as saved credentials and private notes.
+
+On Windows, sensitive vault data can be protected using Windows' built-in security mechanisms.
+
+The goal is simple:
+
+**Your private data should not be casually exposed just because it is stored on your computer.**
+
+---
+
+# Netflix Controls
+
+Aegis includes optional controls for supported Netflix playback features.
+
+These can help automatically handle actions such as:
+
+* Skipping intros
+* Skipping recaps
+* Moving to the next episode
+
+---
+
+# Developer Console
+
+Aegis includes a built-in diagnostic console for troubleshooting the browser.
+
+It can help identify problems involving:
+
+* Browser features
+* Websites
+* Downloads
+* Updates
+* Settings
+* Data storage
+
+This is particularly useful when something goes wrong without requiring the user to dig through complicated log files.
+
+---
+
+# Keyboard Shortcuts
+
+| Shortcut       | Action                  |
+| -------------- | ----------------------- |
+| `Ctrl/Cmd + L` | Focus the address bar   |
+| `Ctrl/Cmd + T` | Open a new tab          |
+| `Ctrl/Cmd + W` | Close the current tab   |
+| `Ctrl/Cmd + R` | Reload the current page |
+| `Alt + Left`   | Go back                 |
+| `Alt + Right`  | Go forward              |
+
+---
+
+# What Makes Aegis Different?
+
+Aegis is not intended to be another browser with a different theme.
+
+Its focus is on **organization, separation, and power-user workflows**.
+
+### Workspace-based browsing
+
+Instead of putting everything into one browser profile, Aegis lets you maintain separate environments for different activities.
+
+### Browser + workspace tools
+
+Aegis combines browsing with tools that are commonly needed alongside it:
+
+* Web apps
+* Split-screen browsing
+* Notes
+* Terminal
+* Downloads
+* Diagnostics
+
+### Designed for heavy browsing
+
+Aegis is intended for users who regularly work with many websites, accounts, projects, and tools at the same time.
+
+---
+
+# Screenshots
+
+*Add screenshots or GIFs here.*
+
+Recommended screenshots:
+
+* Main browser window
+* Workspace switcher
+* Tab groups
+* Split view
+* Web app panels
+* Download manager
+* Notes
+* Terminal
+* Settings
+* Dark/light themes
+
+---
+
+# Privacy Philosophy
+
+Aegis follows a simple principle:
+
+> **Your browser should work for you, not require your entire workflow to revolve around it.**
+
+The application is designed to keep important browsing and application data on your computer and give you control over how that data is separated.
+
+---
+
+# Technology
+
+Aegis is built using:
+
+* **Tauri 2**
+* **Rust**
+* **React**
+* **TypeScript**
+* **SQLite**
+* **WebView2**
+
+Aegis uses native desktop web technologies rather than building the browser around Electron.
+
+The project is designed to provide a desktop application while keeping resource usage lower than traditional Chromium-based desktop shells where possible.
+
+---
+
+# Windows Support
+
+Aegis currently targets **Windows**.
+
+Available builds are provided as:
+
+* MSI installer
+* NSIS installer
+
+---
+
+# Development
+
+Clone the repository and install the required dependencies.
+
+```bash
+npm install
 ```
-npm run dev          # Vite dev server on 127.0.0.1:5173
-npm run build        # Type-check + production build
-npm run preview      # Preview production build
-npm run tauri:dev    # Desktop app in dev mode
-npm run tauri:build  # Build desktop installer (MSI + NSIS)
-npm run lint         # ESLint check
-npm run lint:fix     # ESLint auto-fix
-npm run format       # Prettier check
-npm run format:fix   # Prettier write
+
+Run the development version:
+
+```bash
+npm run tauri:dev
 ```
 
-## Project Structure
+Build the application:
 
-```
-src/
-  App.tsx                    Root component, all browser orchestration
-  main.tsx                   React mount point
-  types.ts                   Domain types
-  components/
-    TabStrip.tsx             Tab bar with drag reorder and grouped chips
-    ChromeActions.tsx        Toolbar quick-action buttons
-    Omnibox.tsx              Address bar with suggestions
-    HomeScreen.tsx           New-tab page with search
-    Sidebar.tsx              Left sidebar with panel launchers
-    CreateWorkspaceModal.tsx Workspace creation dialog
-    Toasts.tsx               Notification toasts
-    Favicon.tsx, Logo.tsx, Icons.tsx, AiEmblem.tsx
-    panels/
-      PanelHost.tsx          Panel router and webview container
-      BookmarksPanel.tsx     Bookmark list and add form
-      HistoryPanel.tsx       Browsing history grouped by day
-      DownloadsPanel.tsx     Download list with state badges
-      SettingsPanel.tsx      Preferences and privacy controls
-      NotesPanel.tsx         Encrypted scratchpad
-  hooks/
-    useWebviewManager.ts     Native webview lifecycle and layout sync
-    useKeyboardShortcuts.ts  Global shortcut bindings
-    useVoiceSearch.ts        Speech recognition integration
-    useQrScan.ts             QR code file reader
-    useToasts.ts             Toast notification state
-  services/
-    storage.ts               SQLite persistence, migrations, secure vault
-    downloads.ts             Download state manager (simulated progress)
-    debug.ts                 Debug log channel to file
-  constants/
-    webApps.ts               Embedded web-app panel URLs
-    panels.ts                Legacy duplicate of webApps constants
-  utils/
-    browser.ts               Tab factories, URL normalization, defaults
-    format.ts                Byte/time/date formatting helpers
-  styles/
-    tokens.css               Design tokens, theme variables
-    base.css                 Reset and base styles
-    layout.css               App shell and structural layout
-    components.css           Widget and panel styling
-src-tauri/
-  src/
-    lib.rs                   Tauri builder, plugin and command registration
-    main.rs                  Binary entry point
-    commands.rs              IPC commands (navigation, muting, profiles, debug)
-    navigation.rs            Navigation gating plugin with redirect/debounce logic
-    injection.rs             JavaScript injected into child webviews
-    security.rs              DPAPI encrypt/decrypt commands
-  capabilities/
-    default.json             Tauri permission declarations
-  tauri.conf.json            Window, bundle, and CSP configuration
-  Cargo.toml                 Rust dependencies
+```bash
+npm run tauri:build
 ```
 
-## Storage
+Other available commands:
 
-All browser state is stored in a local SQLite database (`Aegis.db`). No cloud sync. Data stays on the local machine per user profile. Tabs, bookmarks, history, downloads, settings, workspace definitions, sidebar state, window geometry, and closed-tab records are all persisted. Encrypted data (notes, credentials) is stored in a `secure_vault` table with OS-level encryption on Windows.
+```bash
+npm run dev
+npm run build
+npm run preview
+npm run lint
+npm run lint:fix
+npm run format
+npm run format:fix
+```
 
-## Build Targets
+---
 
-Bundles are produced as MSI and NSIS installers for Windows.
+# Project Status
 
-## License
+Aegis is an actively developed project.
+
+Features and behavior may change as development continues.
+
+---
+
+# License
 
 No license file is currently included in this repository.
