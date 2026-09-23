@@ -1,6 +1,6 @@
 [package]
 name = "aegis-browser"
-version = "1.4.2"
+version = "1.4.3"
 description = "Aegis Browser"
 authors = ["Lee Roi Andrei D. Cayetano"]
 license = ""
@@ -37,5 +37,6 @@ strip = true
 lto = true
 codegen-units = 1
 debug = false
+
 
 
