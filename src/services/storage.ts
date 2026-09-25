@@ -53,6 +53,23 @@ function getWriteQueueState(): GlobalStorageState {
   return globalStorageState.__AegisStorageState!;
 }
 
+async function ensureDbDecrypted(): Promise<void> {
+  try {
+    const didDecrypt = await invoke<boolean>("decrypt_db");
+    if (didDecrypt) {
+      devConsole.db({
+        operation: "DECRYPT",
+        tableOrQuery: "Aegis.db.enc -> Aegis.db",
+        status: "success",
+        details: { atRest: "decrypted for session" },
+      });
+    }
+  } catch (e) {
+    // Non-fatal — if decrypt fails, fall back to plaintext DB
+    devConsole.frontend("warn", "DB Decrypt Skipped", String(e), { error: e });
+  }
+}
+
 export async function getDb(): Promise<SqliteDatabase> {
   if (db) return db;
   if (!initPromise) {
@@ -61,9 +78,12 @@ export async function getDb(): Promise<SqliteDatabase> {
       operation: "CONNECT",
       tableOrQuery: "sqlite:Aegis.db",
       status: "success",
-      details: { db: "Aegis.db" },
+      details: { db: "Aegis.db (DPAPI at-rest: Aegis.db.enc)" },
     });
-    initPromise = Database.load("sqlite:Aegis.db")
+    initPromise = (async () => {
+      await ensureDbDecrypted();
+      return Database.load("sqlite:Aegis.db");
+    })()
       .then((database) => {
         db = database;
         devConsole.setDbStatus("connected");
@@ -71,8 +91,10 @@ export async function getDb(): Promise<SqliteDatabase> {
           operation: "CONNECTED",
           tableOrQuery: "sqlite:Aegis.db",
           status: "success",
-          details: { status: "ready" },
+          details: { status: "ready", atRestEncrypted: true },
         });
+        // Best-effort: keep enc mirror updated after connect
+        void invoke("encrypt_db").catch(() => undefined);
         return database;
       })
       .catch((error) => {
@@ -88,6 +110,33 @@ export async function getDb(): Promise<SqliteDatabase> {
       });
   }
   return initPromise;
+}
+
+export async function encryptDbAtRest(removePlain = false): Promise<boolean> {
+  try {
+    const cmd = removePlain ? "encrypt_db_and_remove_plain" : "encrypt_db";
+    const ok = await invoke<boolean>(cmd);
+    if (ok) {
+      devConsole.db({
+        operation: "ENCRYPT",
+        tableOrQuery: "Aegis.db -> Aegis.db.enc",
+        status: "success",
+        details: { atRest: "encrypted", removePlain },
+      });
+    }
+    return ok;
+  } catch (e) {
+    devConsole.frontend("error", "DB Encrypt Failed", String(e), { error: e });
+    return false;
+  }
+}
+
+export async function getDbEncryptionStatus(): Promise<string> {
+  try {
+    return await invoke<string>("db_encryption_status");
+  } catch {
+    return "unknown";
+  }
 }
 
 function enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {

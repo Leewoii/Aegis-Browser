@@ -11,10 +11,11 @@ use std::sync::{Arc, Mutex};
 pub fn run() {
   #[cfg(target_os = "windows")]
   {
-    // Enable Widevine DRM, MediaFoundation hardware decoding, and autoplay for video streaming (Netflix, Crunchyroll, etc.)
+    // Enable Widevine DRM and hardware acceleration for video streaming (Netflix, Crunchyroll, YouTube)
+    // Keep GPU compositing enabled (disabling causes blank/skeleton on YouTube) and don't disable TrackingPrevention aggressively
     std::env::set_var(
       "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-      "--enable-features=WidevineCdm,MediaFoundationPlayback,HardwareMediaKeyHandling,EncryptedMedia --autoplay-policy=no-user-gesture-required --disable-features=TrackingPrevention --disable-gpu-compositing",
+      "--enable-features=WidevineCdm,MediaFoundationPlayback,HardwareMediaKeyHandling,EncryptedMedia --autoplay-policy=no-user-gesture-required",
     );
   }
 
@@ -31,7 +32,8 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .plugin(navigation::aegis_navigation_plugin(
       navigation_state,
-      injection::interception_script(),
+      injection::nav_interception_script(),
+      injection::player_script(),
     ))
     .invoke_handler(tauri::generate_handler![
       commands::allow_navigation,
@@ -42,6 +44,10 @@ pub fn run() {
       commands::debug_log,
       security::encrypt_secret,
       security::decrypt_secret,
+      security::decrypt_db,
+      security::encrypt_db,
+      security::encrypt_db_and_remove_plain,
+      security::db_encryption_status,
       download::start_download,
       download::cancel_download,
       download::pause_download,

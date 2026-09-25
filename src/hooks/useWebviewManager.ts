@@ -410,6 +410,18 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     });
   }, [syncActive]);
 
+  /**
+   * Record that `url` is already loaded (or loading) in the given tab's webview.
+   * Call this whenever the frontend navigates a webview directly via
+   * `allow_navigation` + `navigate_webview`, so the next `syncActive` pass
+   * doesn't issue a duplicate full-page navigation to the same URL
+   * (which reloads SPA state — e.g. Google Maps/Search — and causes
+   * reload loops and PAGE_LOADED spam).
+   */
+  const markTabUrlLoaded = useCallback((tabId: string, url: string) => {
+    lastLoadedUrlRef.current[tabId] = url;
+  }, []);
+
   /** Hide the active tab's webview and panel webviews so HTML overlays (e.g. suggestions, modals) render above them. */
   const hideActiveWebview = useCallback(async () => {
     for (const wv of Object.values(tabWebviewsRef.current)) {
@@ -454,5 +466,6 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     scheduleSyncActive,
     syncPanelOnly: syncPanelWebview,
     hideActiveWebview,
+    markTabUrlLoaded,
   };
 }

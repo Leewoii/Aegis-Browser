@@ -70,6 +70,7 @@ import {
   saveNetflixSettings,
   DEFAULT_NETFLIX_SETTINGS,
   type NetflixExtensionSettings,
+  encryptDbAtRest,
 } from "./services/storage";
 import { downloadManager } from "./services/downloads";
 
@@ -143,6 +144,8 @@ export default function App() {
   const [isResizing, setIsResizing] = useState(false);
   const panelWidthRef = useRef(340);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [isVideoFullscreen, setIsVideoFullscreen] = useState(false);
+  const wasMaximizedBeforeVideoFs = useRef(false);
 
   // ── Refs ──────────────────────────────────────────────────────────
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -353,6 +356,7 @@ export default function App() {
     scheduleSyncActive,
     syncPanelOnly,
     hideActiveWebview,
+    markTabUrlLoaded,
   } = useWebviewManager({
     contentRef,
     splitLeftRef,
@@ -630,6 +634,11 @@ export default function App() {
           });
         }
 
+        // At-rest protection: mirror plaintext DB to DPAPI-encrypted Aegis.db.enc
+        try {
+          await encryptDbAtRest(false);
+        } catch {}
+
         try {
           await getCurrentWindow().close();
         } catch (error) {
@@ -812,12 +821,28 @@ export default function App() {
           if (label && pending?.url === url) {
             delete pendingFrontendNavRef.current[label];
           }
+          // Resolve the owning tab outside setTabs so we can record the URL
+          // as already-loaded — otherwise the next syncActive pass would issue
+          // a duplicate navigate_webview to the same URL, hard-reloading SPA
+          // state (Google Maps/Search) and causing reload loops.
+          const owner = label
+            ? tabsRef2.current.find((t) => t.label === label)
+            : activeTabRef.current;
+          if (owner && owner.url !== url) {
+            markTabUrlLoaded(owner.id, url);
+          }
           setTabs((prev) =>
             prev.map((tab) => {
               const matches = label ? tab.label === label : tab.id === activeTabRef.current?.id;
               if (matches && tab.url !== url) {
-                const history = tab.history.slice(0, tab.index);
-                history.push(url);
+                // Keep entries up to and including the current one, then append.
+                // (slice(0, index) would drop the current page from history.)
+                const history = tab.history.slice(0, tab.index + 1);
+                // Guard against duplicate consecutive entries from repeated
+                // load-finished events for the same document (iframes/SPA).
+                if (history[history.length - 1] !== url) {
+                  history.push(url);
+                }
                 return {
                   ...tab,
                   url,
@@ -893,6 +918,33 @@ export default function App() {
       });
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
+    // Video fullscreen — child webview video entered/exited fullscreen (viewport, not OS window)
+    void listen<{ enter: boolean; label: string }>("Aegis-fullscreen", (event) => {
+      if (disposed) return;
+      const enter = !!(event.payload as any)?.enter;
+      const label = (event.payload as any)?.label as string | undefined;
+      if (enter && label) {
+        // Only a visible tab may take over the window chrome — ignore
+        // fullscreen requests from background tabs.
+        const activeLabel = activeTabRef.current?.label;
+        let owned = activeLabel === label;
+        if (!owned) {
+          const s = splitStateRef.current;
+          const curId = activeTabRef.current?.id;
+          if (s && curId && (curId === s.leftTabId || curId === s.rightTabId)) {
+            owned = tabsRef2.current.some(
+              (t) => (t.id === s.leftTabId || t.id === s.rightTabId) && t.label === label,
+            );
+          }
+        }
+        if (!owned) return;
+      }
+      setIsVideoFullscreen(enter);
+      // Ensure webview bounds fill viewport when fullscreen (hide chrome/sidebar via CSS)
+      setTimeout(() => void scheduleSyncActive(), 50);
+      setTimeout(() => void scheduleSyncActive(), 220);
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+
     return () => {
       disposed = true;
       for (const fn of cleanups) fn();
@@ -964,6 +1016,87 @@ export default function App() {
     document.documentElement.classList.toggle("is-maximized", isWindowMaximized);
   }, [isWindowMaximized]);
 
+  // ── Video fullscreen — OS-level fullscreen + viewport expansion ──
+  useEffect(() => {
+    document.documentElement.classList.toggle("aegis-video-fullscreen", isVideoFullscreen);
+    const w = getCurrentWindow();
+    if (isVideoFullscreen) {
+      // Remember current window state so we can restore it on exit
+      void (async () => {
+        try {
+          wasMaximizedBeforeVideoFs.current = await w.isMaximized();
+          // On Windows, going from maximized → fullscreen can glitch in
+          // some WebView2 versions, so unmaximize first.
+          if (wasMaximizedBeforeVideoFs.current) {
+            await w.unmaximize();
+          }
+          await w.setFullscreen(true);
+        } catch {
+          // Fallback — at worst we get the old viewport-only behavior
+        }
+        void scheduleSyncActive();
+        setTimeout(() => void scheduleSyncActive(), 220);
+      })();
+    } else {
+      // Exit OS fullscreen and restore previous window state
+      void (async () => {
+        try {
+          const isFs = await w.isFullscreen();
+          if (isFs) {
+            await w.setFullscreen(false);
+            // Give OS a moment to restore the window frame before re-maximizing
+            if (wasMaximizedBeforeVideoFs.current) {
+              setTimeout(async () => {
+                try { await w.maximize(); } catch { /* ignore */ }
+              }, 100);
+            }
+          }
+        } catch {
+          // ignore
+        }
+        void scheduleSyncActive();
+        setTimeout(() => void scheduleSyncActive(), 220);
+      })();
+    }
+  }, [isVideoFullscreen, scheduleSyncActive]);
+
+  // Leaving a fullscreen video tab exits its fake fullscreen so the chrome
+  // doesn't stay hidden on the tab you switched to.
+  const prevActiveTabIdRef = useRef(activeTabId);
+  useEffect(() => {
+    const prevId = prevActiveTabIdRef.current;
+    prevActiveTabIdRef.current = activeTabId;
+    if (prevId !== activeTabId && isVideoFullscreen) {
+      const prevTab = tabsRef2.current.find((t) => t.id === prevId);
+      if (prevTab) {
+        void invoke("eval_in_webview", {
+          label: prevTab.label,
+          script: "try{ if(window.__aegisExitFs) window.__aegisExitFs(); }catch(_){}",
+        }).catch(() => undefined);
+      }
+      setIsVideoFullscreen(false);
+    }
+  }, [activeTabId, isVideoFullscreen]);
+
+  useEffect(() => {
+    if (!isVideoFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        const label = activeTabRef.current?.label;
+        if (label) {
+          void invoke("eval_in_webview", {
+            label,
+            script: "try{ if(document.fullscreenElement) document.exitFullscreen(); if(document.webkitFullscreenElement) document.webkitExitFullscreen(); if(document.mozFullScreenElement) document.mozCancelFullScreen(); }catch(_){}",
+          }).catch(() => undefined);
+        }
+        setIsVideoFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [isVideoFullscreen]);
+
   useEffect(() => {
     let cancelled = false;
     let unlistenResize: (() => void) | undefined;
@@ -1027,6 +1160,9 @@ export default function App() {
     const tab = tabs.find((item) => item.id === id);
     if (tab) {
       pendingFrontendNavRef.current[tab.label] = { url, at: Date.now() };
+      // Mark synchronously so the next syncActive pass doesn't re-navigate
+      // to the same URL (duplicate full-page load).
+      markTabUrlLoaded(tab.id, url);
       await invoke("allow_navigation", { label: tab.label, url }).catch(() => undefined);
     }
     setTabs((current) =>
@@ -1062,6 +1198,7 @@ export default function App() {
     if (nextIndex < 0 || nextIndex >= tab.history.length) return;
     const nextUrl = tab.history[nextIndex];
     pendingFrontendNavRef.current[tab.label] = { url: nextUrl, at: Date.now() };
+    markTabUrlLoaded(tab.id, nextUrl);
     setTabs((current) =>
       current.map((item) =>
         item.id === tab.id
@@ -1087,6 +1224,7 @@ export default function App() {
     if (tab.kind !== "web") return;
     setIsReloading(true);
     setIsLoading(true);
+    markTabUrlLoaded(tab.id, tab.url);
     void invoke("allow_navigation", { label: tab.label, url: tab.url })
       .then(() => invoke("navigate_webview", { label: tab.label, url: tab.url }))
       .catch((err) => {
@@ -1787,7 +1925,7 @@ export default function App() {
 
   return (
     <div
-      className={`app-container ${isWindowMaximized ? "is-maximized" : ""} ${isResizing ? "is-resizing" : ""}`}
+      className={`app-container ${isWindowMaximized ? "is-maximized" : ""} ${isResizing ? "is-resizing" : ""} ${isVideoFullscreen ? "video-fullscreen" : ""}`}
       style={
         {
           "--sidebar-visual-w": `${sidebarVisualWidth}px`,
@@ -2058,6 +2196,7 @@ export default function App() {
                         t.id === splitLeftTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: titleFromUrl(url) } : t
                       ));
                       recordHistory(url, titleFromUrl(url));
+                      markTabUrlLoaded(splitLeftTab.id, url);
                       void invoke("allow_navigation", { label: splitLeftTab.label, url }).catch((e) => devConsole.frontend("warn", "Split Left Allow Navigation Failed", String(e), { label: splitLeftTab.label, url }));
                       void invoke("navigate_webview", { label: splitLeftTab.label, url }).catch((e) => devConsole.frontend("error", "Split Left Navigate Failed", String(e), { label: splitLeftTab.label, url, error: e }));
                       scheduleSyncActive();
@@ -2087,6 +2226,7 @@ export default function App() {
                           const newIdx = splitRightTab.index - 1;
                           const url = splitRightTab.history[newIdx];
                           setTabs((prev) => prev.map((t) => t.id === splitRightTab.id ? { ...t, url, index: newIdx } : t));
+                          markTabUrlLoaded(splitRightTab.id, url);
                           void invoke("allow_navigation", { label: splitRightTab.label, url }).catch(() => undefined);
                           void invoke("navigate_webview", { label: splitRightTab.label, url }).catch(() => undefined);
                           scheduleSyncActive();
@@ -2107,6 +2247,7 @@ export default function App() {
                           const newIdx = splitRightTab.index + 1;
                           const url = splitRightTab.history[newIdx];
                           setTabs((prev) => prev.map((t) => t.id === splitRightTab.id ? { ...t, url, index: newIdx } : t));
+                          markTabUrlLoaded(splitRightTab.id, url);
                           void invoke("allow_navigation", { label: splitRightTab.label, url }).catch(() => undefined);
                           void invoke("navigate_webview", { label: splitRightTab.label, url }).catch(() => undefined);
                           scheduleSyncActive();
@@ -2169,6 +2310,7 @@ export default function App() {
                         t.id === splitRightTab.id ? { ...t, url, history: newHistory, index: newHistory.length - 1, title: titleFromUrl(url) } : t
                       ));
                       recordHistory(url, titleFromUrl(url));
+                      markTabUrlLoaded(splitRightTab.id, url);
                       void invoke("allow_navigation", { label: splitRightTab.label, url }).catch(() => undefined);
                       void invoke("navigate_webview", { label: splitRightTab.label, url }).catch(() => undefined);
                       scheduleSyncActive();

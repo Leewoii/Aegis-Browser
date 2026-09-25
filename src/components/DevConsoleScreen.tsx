@@ -18,6 +18,7 @@ import {
   Check,
   Globe,
   Cpu,
+  Megaphone,
 } from "lucide-react";
 import {
   devConsole,
@@ -29,6 +30,7 @@ import {
   type DevConsoleStats,
 } from "../services/devConsole";
 import { runStorageDiagnostics, type StorageDiagnosticsResult } from "../services/storage";
+import { FeedbackModal } from "./FeedbackModal";
 
 export function DevConsoleScreen() {
   const [logs, setLogs] = useState<DevLogEntry[]>(() => devConsole.getLogs());
@@ -44,8 +46,9 @@ export function DevConsoleScreen() {
   const [diagResult, setDiagResult] = useState<StorageDiagnosticsResult | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [hasCopiedAll, setHasCopiedAll] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
 
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
 
   // Subscribe to real-time logs and stats
   useEffect(() => {
@@ -61,10 +64,10 @@ export function DevConsoleScreen() {
     };
   }, []);
 
-  // Auto-scroll when new logs arrive
+  // Auto-scroll only the log feed when new logs arrive
   useEffect(() => {
-    if (autoScroll && logsEndRef.current) {
-      logsEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll && feedRef.current) {
+      feedRef.current.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
     }
   }, [logs, autoScroll]);
 
@@ -189,6 +192,14 @@ export function DevConsoleScreen() {
         </div>
 
         <div className="dev-console-top-actions">
+          <button
+            className="dev-console-btn primary"
+            onClick={() => setIsFeedbackOpen(true)}
+            title="Report a problem or request a feature — sends to your Cloudflare Worker"
+          >
+            <Megaphone size={14} />
+            Report / Request
+          </button>
           <button
             className="dev-console-btn primary"
             onClick={() => void handleRunDiagnostics()}
@@ -435,8 +446,8 @@ export function DevConsoleScreen() {
         </div>
       </div>
 
-      {/* Log Feed */}
-      <div className="dev-console-feed" role="log" aria-live="polite">
+      {/* Log Feed — only scrollable region */}
+      <div className="dev-console-feed" ref={feedRef} role="log" aria-live="polite">
         {filteredLogs.length === 0 ? (
           <div className="dev-console-empty">
             <Terminal size={36} strokeWidth={1.5} />
@@ -618,8 +629,15 @@ export function DevConsoleScreen() {
             );
           })
         )}
-        <div ref={logsEndRef} />
       </div>
+
+      <FeedbackModal
+        isOpen={isFeedbackOpen}
+        onClose={() => setIsFeedbackOpen(false)}
+        logs={filteredLogs}
+        stats={stats}
+        diagnostics={diagResult}
+      />
     </section>
   );
 }

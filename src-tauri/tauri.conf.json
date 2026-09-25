@@ -29,7 +29,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' https://*.duckduckgo.com https://*.google.com https://*.bing.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https:; font-src 'self' data:; media-src 'self' https:; frame-src 'self' https:; object-src 'none'"
+      "csp": "default-src * 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http: ws: wss:; script-src * 'self' 'unsafe-inline' 'unsafe-eval' https: http: blob: data: 'strict-dynamic'; style-src * 'self' 'unsafe-inline' https: http: data: blob:; img-src * 'self' data: blob: https: http:; font-src * 'self' data: https: http:; media-src * 'self' https: http: blob: data:; connect-src * 'self' https: http: ws: wss: data: blob:; frame-src * 'self' https: http: blob:; object-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

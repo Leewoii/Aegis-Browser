@@ -19,7 +19,12 @@ import {
   Clock,
 } from "lucide-react";
 import type { SearchEngine, Settings, ThemeName } from "../types";
-import { retrieveSecureSecret, storeSecureSecret } from "../services/storage";
+import {
+  retrieveSecureSecret,
+  storeSecureSecret,
+  getDbEncryptionStatus,
+  encryptDbAtRest,
+} from "../services/storage";
 import { devConsole } from "../services/devConsole";
 
 type SectionId = "general" | "appearance" | "privacy" | "passwords";
@@ -93,6 +98,8 @@ export function SettingsScreen({
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [clearingProfile, setClearingProfile] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [encStatus, setEncStatus] = useState<string>("checking...");
+  const [encrypting, setEncrypting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -123,6 +130,38 @@ export function SettingsScreen({
       active = false;
     };
   }, []);
+
+  // DB at-rest encryption status (Aegis.db is plain SQLite — readable with any DB viewer)
+  useEffect(() => {
+    if (section !== "privacy") return;
+    let active = true;
+    void (async () => {
+      try {
+        const s = await getDbEncryptionStatus();
+        if (active) setEncStatus(s);
+      } catch {
+        if (active) setEncStatus("plain:true enc:false (unavailable)");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [section]);
+
+  const handleEncryptNow = async () => {
+    setEncrypting(true);
+    try {
+      const ok = await encryptDbAtRest(false);
+      const s = await getDbEncryptionStatus();
+      setEncStatus(s);
+      devConsole.settings("info", "DB Encrypt", ok ? `DB at-rest encrypted (mirror updated): ${s}` : `Encrypt skipped: ${s}`, { status: s });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      devConsole.settings("error", "DB Encrypt Failed", msg, { error: err });
+    } finally {
+      setEncrypting(false);
+    }
+  };
 
   const saveCredsList = async (list: CredentialItem[]) => {
     setCredentials(list);
@@ -394,9 +433,44 @@ export function SettingsScreen({
                 </div>
               </div>
 
+              <div className="settings-group" style={{ marginTop: 16 }}>
+                <div className="settings-row">
+                  <div className="settings-row-icon" style={{ background: "rgba(110,155,255,0.12)", color: "#6e9bff" }}>
+                    <Lock size={14} />
+                  </div>
+                  <div className="settings-row-text">
+                    <strong>Database at-rest encryption</strong>
+                    <span style={{ wordBreak: "break-all" }}>
+                      <code className="settings-inline-code" style={{ fontSize: 11 }}>{encStatus}</code>
+                      <br />
+                      <span style={{ fontSize: 11, opacity: 0.85 }}>
+                        <b>Aegis.db</b> is plain SQLite — any viewer can read `tabs`, `history`, `downloads`.{" "}
+                        Credentials/`secure_vault` are already DPAPI-encrypted, but now the whole DB is mirrored as{" "}
+                        <b>Aegis.db.enc</b> (DPAPI `CryptProtectData`) on every close. Plain remains while running for SQLite, encrypted mirror protects offline copies.
+                      </span>
+                    </span>
+                  </div>
+                  <button className="settings-btn" onClick={handleEncryptNow} disabled={encrypting} title="Mirror current DB to encrypted file now">
+                    {encrypting ? <Loader2 size={13} className="spin" /> : <Shield size={13} />}
+                    {encrypting ? "Encrypting…" : "Encrypt now"}
+                  </button>
+                </div>
+                <div className="settings-row" style={{ opacity: 0.9 }}>
+                  <div className="settings-row-icon" style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}>
+                    <Shield size={14} />
+                  </div>
+                  <div className="settings-row-text">
+                    <strong>How to make it unreadable</strong>
+                    <span>
+                      Full cold protection needs <b>SQLCipher</b> (`PRAGMA key` per-page encryption) or OS full-disk. Current file-level DPAPI is “at-rest mirror” — best without migrating to SQLCipher. For true unreadability: enable SQLCipher (rekey existing DB, store key in DPAPI vault) or move `Aegis.db` to BitLocker/encrypted volume.
+                    </span>
+                  </div>
+                </div>
+              </div>
+
               <div className="settings-hint">
                 <Lock size={12} />
-                Workspace data is stored per-profile under <code>profiles/workspace_{activeWorkspaceId}</code> and isolated by the engine.
+                Workspace data is stored per-profile under <code>profiles/workspace_{activeWorkspaceId}</code> and isolated by the engine. Vault keys stay DPAPI-bound to this Windows user.
               </div>
             </div>
           )}

@@ -1,0 +1,23 @@
+# Aegis Browser — Feedback / Report Worker
+# Live URL: https://aegis-feedback.leeroi-c25.workers.dev
+#
+# 1. npm install -g wrangler   (or npx wrangler)
+# 2. wrangler login
+# 3. wrangler kv:namespace create FEEDBACK_KV
+# 4. Paste the returned id / preview_id below (uncomment the block)
+# 5. Set the dashboard password as a SECRET (never in plain text):
+#      wrangler secret put ADMIN_TOKEN
+#    All reads/writes on /api/* (except submitting new reports) then
+#    require `Authorization: Bearer <password>`. The dashboard asks for
+#    the password once and remembers it in that browser.
+# 6. wrangler deploy
+
+name = "aegis-feedback"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Uncomment after creating the KV namespace:
+# [[kv_namespaces]]
+# binding = "FEEDBACK_KV"
+# id = "PASTE_PROD_KV_ID"
+# preview_id = "PASTE_PREVIEW_KV_ID"

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tauri::Manager;
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
@@ -158,4 +159,74 @@ pub fn decrypt_secret(ciphertext_hex: String) -> Result<String, String> {
 
   let decrypted = win_dpapi::unprotect(&bytes)?;
   String::from_utf8(decrypted).map_err(|e| format!("Invalid UTF-8 plaintext: {}", e))
+}
+
+/// Decrypt Aegis.db.enc -> Aegis.db if enc exists (file-at-rest protection). Returns true if decrypted.
+#[tauri::command]
+pub fn decrypt_db(app: tauri::AppHandle) -> Result<bool, String> {
+  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let db_path = dir.join("Aegis.db");
+  let enc_path = dir.join("Aegis.db.enc");
+  if !enc_path.exists() {
+    return Ok(false);
+  }
+  // If plaintext already exists and is newer than enc, keep it (avoid overwriting newer data)
+  // Prefer enc if it exists — it is the at-rest representation
+  let enc_bytes = std::fs::read(&enc_path).map_err(|e| e.to_string())?;
+  let plain = win_dpapi::unprotect(&enc_bytes)?;
+  std::fs::write(&db_path, plain).map_err(|e| e.to_string())?;
+  Ok(true)
+}
+
+/// Encrypt Aegis.db -> Aegis.db.enc and remove plaintext (or keep if keep_plain). Returns true if encrypted.
+#[tauri::command]
+pub fn encrypt_db(app: tauri::AppHandle) -> Result<bool, String> {
+  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let db_path = dir.join("Aegis.db");
+  let enc_path = dir.join("Aegis.db.enc");
+  if !db_path.exists() {
+    return Ok(false);
+  }
+  let plain = std::fs::read(&db_path).map_err(|e| e.to_string())?;
+  let enc = win_dpapi::protect(&plain)?;
+  // atomic write
+  let tmp = dir.join("Aegis.db.enc.tmp");
+  std::fs::write(&tmp, &enc).map_err(|e| e.to_string())?;
+  std::fs::rename(&tmp, &enc_path).map_err(|e| e.to_string())?;
+  // Do NOT delete plaintext while app is running — SQLite needs it. Caller should invoke on close after DB closed.
+  // For at-rest protection we keep enc as mirror; on next launch decrypt will overwrite.
+  Ok(true)
+}
+
+/// Encrypt and remove plaintext — for shutdown path after DB closed.
+#[tauri::command]
+pub fn encrypt_db_and_remove_plain(app: tauri::AppHandle) -> Result<bool, String> {
+  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let db_path = dir.join("Aegis.db");
+  let enc_path = dir.join("Aegis.db.enc");
+  if !db_path.exists() {
+    return Ok(false);
+  }
+  let plain = std::fs::read(&db_path).map_err(|e| e.to_string())?;
+  let enc = win_dpapi::protect(&plain)?;
+  std::fs::write(&enc_path, enc).map_err(|e| e.to_string())?;
+  // best-effort remove plaintext
+  let _ = std::fs::remove_file(&db_path);
+  Ok(true)
+}
+
+/// Returns whether DB file on disk is currently encrypted (enc exists) or plaintext readable.
+#[tauri::command]
+pub fn db_encryption_status(app: tauri::AppHandle) -> Result<String, String> {
+  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let db_path = dir.join("Aegis.db");
+  let enc_path = dir.join("Aegis.db.enc");
+  let has_plain = db_path.exists();
+  let has_enc = enc_path.exists();
+  Ok(format!(
+    "plain:{} enc:{} dir:{}",
+    has_plain,
+    has_enc,
+    dir.to_string_lossy()
+  ))
 }

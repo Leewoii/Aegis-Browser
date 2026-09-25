@@ -11,11 +11,26 @@ use tauri::{
 
 const FRONTEND_NAV_WINDOW: Duration = Duration::from_secs(5);
 const EMIT_DEBOUNCE: Duration = Duration::from_millis(1500);
+/// Google-style pages (Maps/Search) fire PageLoadEvent::Finished repeatedly
+/// for the same document (iframes, sub-resources). Re-emitting every one
+/// floods the terminal log and makes the frontend re-record the same URL,
+/// so identical finished events for one webview are coalesced.
+const FINISH_DEBOUNCE: Duration = Duration::from_millis(1000);
+
+/// Managed tab/panel webviews (as opposed to standalone windows).
+fn is_managed_webview(label: &str) -> bool {
+  label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-")
+}
 
 /// Streaming providers rely on the browser's native popup, media, and DRM APIs.
-/// The browser's navigation helper replaces some of those APIs, so leave these
-/// top-level pages untouched.
-fn should_inject_navigation_helper(label: &str, page_url: &str) -> bool {
+/// The link/popup interceptor replaces some of those APIs, so leave these
+/// top-level pages untouched by the NAV script.
+///
+/// NOTE: this gates ONLY link/popup interception. The PLAYER script
+/// (video fullscreen, shortcuts, title, error forwarding) must run on every
+/// site including these hosts — otherwise e.g. the Netflix fullscreen button
+/// hits unhandled native fullscreen and appears to do nothing.
+fn should_inject_nav_script(label: &str, page_url: &str) -> bool {
   if !(label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-")) {
     return false;
   }
@@ -98,6 +113,7 @@ pub struct NavigationMap {
   pub(crate) current_urls: HashMap<String, String>,
   pub(crate) recent_emits: HashMap<String, Instant>,
   pub(crate) pending_frontend_nav: HashMap<String, Instant>,
+  pub(crate) last_finished: HashMap<String, (String, Instant)>,
 }
 
 #[derive(Clone)]
@@ -121,7 +137,8 @@ impl NavigationState {
 /// webviews and forwards intercepted links to the main window.
 pub fn aegis_navigation_plugin(
   state: Arc<Mutex<NavigationMap>>,
-  interception_script: &'static str,
+  nav_script: &'static str,
+  player_script: &'static str,
 ) -> TauriPlugin<Wry> {
   let state_for_nav = NavigationState(state.clone());
 
@@ -236,6 +253,15 @@ pub fn aegis_navigation_plugin(
         return false;
       }
 
+      // Video fullscreen — child webview video entered/exited fullscreen (viewport, not OS window)
+      if url_string.starts_with("sx-internal://fullscreen") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          let enter = parsed.query_pairs().find(|(k, _)| k == "enter").map(|(_, v)| v == "1").unwrap_or(false);
+          let _ = window.emit_to("main", "Aegis-fullscreen", serde_json::json!({ "enter": enter, "label": label }));
+        }
+        return false;
+      }
+
       // Netflix extension toggle from injected floating panel
       if url_string.starts_with("sx-internal://netflix-toggle") {
         if let Ok(parsed) = url::Url::parse(&url_string) {
@@ -318,22 +344,42 @@ pub fn aegis_navigation_plugin(
           println!("[Aegis-nav] PAGE_LOAD_STARTED label={} url={}", label, redact_url(&url));
           let _ = webview.emit_to("main", "Aegis-page-load-started", &url);
 
-          if should_inject_navigation_helper(&label, &url) {
-            let _ = webview.eval(interception_script);
+          if is_managed_webview(&label) {
+            // Player features (video fullscreen, shortcuts, ...) on every site.
+            let _ = webview.eval(player_script);
+            // Link/popup interception everywhere except protected streaming hosts.
+            if should_inject_nav_script(&label, &url) {
+              let _ = webview.eval(nav_script);
+            }
           }
         }
         PageLoadEvent::Finished => {
           let mut nav = state.lock().expect("navigation state poisoned");
           nav.current_urls.insert(label.clone(), url.clone());
           nav.recent_emits.remove(&url);
-          println!("[Aegis-nav] PAGE_LOADED label={} url={}", label, redact_url(&url));
-          let _ = webview.emit_to("main", "Aegis-page-load-finished", serde_json::json!({
-            "label": label,
-            "url": url,
-          }));
+          // Coalesce bursts of identical finished events (iframes on
+          // Google pages) — the webview is already on this URL, so there
+          // is nothing new for the frontend to record.
+          let duplicate = matches!(
+            nav.last_finished.get(&label),
+            Some((last_url, last_at)) if last_url == &url && last_at.elapsed() < FINISH_DEBOUNCE
+          );
+          if !duplicate {
+            nav.last_finished.insert(label.clone(), (url.clone(), Instant::now()));
+            println!("[Aegis-nav] PAGE_LOADED label={} url={}", label, redact_url(&url));
+            let _ = webview.emit_to("main", "Aegis-page-load-finished", serde_json::json!({
+              "label": label,
+              "url": url,
+            }));
+          }
 
-          if should_inject_navigation_helper(&label, &url) {
-            let _ = webview.eval(interception_script);
+          if is_managed_webview(&label) {
+            // Player features (video fullscreen, shortcuts, ...) on every site.
+            let _ = webview.eval(player_script);
+            // Link/popup interception everywhere except protected streaming hosts.
+            if should_inject_nav_script(&label, &url) {
+              let _ = webview.eval(nav_script);
+            }
           }
         }
       }

@@ -84,6 +84,36 @@ html.is-maximized .window-resize-handle,
   transition: none !important;
 }
 
+/* ── Video fullscreen — viewport (not OS window) fills window, hide chrome/sidebar ─── */
+.app-container.video-fullscreen .sidebar-shell,
+.app-container.video-fullscreen .side-panel,
+.app-container.video-fullscreen .chrome,
+.app-container.video-fullscreen .window-resize-handle {
+  display: none !important;
+}
+.app-container.video-fullscreen .main-content-column {
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+}
+.app-container.video-fullscreen .viewport-container,
+.app-container.video-fullscreen .viewport-content,
+.app-container.video-fullscreen .sub-toolbar {
+  background: #000 !important;
+}
+.app-container.video-fullscreen .sub-toolbar {
+  display: none !important;
+}
+.app-container.video-fullscreen {
+  border-radius: 0 !important;
+  border: 0 !important;
+  background: #000 !important;
+}
+.app-container.video-fullscreen::before {
+  display: none !important;
+}
+
 /* ── Frameless window resize handles ───────────────────────────────── */
 .window-resize-handle {
   position: absolute;
