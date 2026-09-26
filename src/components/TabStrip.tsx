@@ -50,6 +50,15 @@ export function TabStrip({
   const hoverTimerRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
+  // Keep the selected tab reachable when the strip contains more tabs than
+  // fit in the available window width.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const active = container.querySelector<HTMLElement>(`[data-tab-id="${activeTabId}"]`);
+    active?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [activeTabId, tabs.length]);
+
   // Group consecutive tabs by group id
   type StripItem =
     | { type: "group"; groupId: string; group: TabGroupType; tabs: Tab[] }
@@ -302,8 +311,8 @@ export function TabStrip({
   const draggedTab = tabs.find((t) => t.id === draggedTabId);
 
   return (
-    <div className="tabs-row" onWheel={handleWheel} ref={containerRef}>
-      <div className="tabs-container" role="tablist" aria-label="Browser tabs">
+    <div className="tabs-row" onWheel={handleWheel}>
+      <div className="tabs-container" role="tablist" aria-label="Browser tabs" ref={containerRef}>
         {stripItems.map((item) => {
           if (item.type === "group") {
             const hasActive = item.tabs.some((t) => t.id === activeTabId);

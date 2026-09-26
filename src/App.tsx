@@ -71,6 +71,8 @@ import {
   DEFAULT_NETFLIX_SETTINGS,
   type NetflixExtensionSettings,
   encryptDbAtRest,
+  closeDatabase,
+  setDatabasePassword,
 } from "./services/storage";
 import { downloadManager } from "./services/downloads";
 
@@ -81,6 +83,7 @@ import { HomeScreen } from "./components/HomeScreen";
 import { UpdatesScreen } from "./components/UpdatesScreen";
 import { DevConsoleScreen } from "./components/DevConsoleScreen";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { AuthGate } from "./components/AuthGate";
 import { NetflixExtension } from "./components/extensions/NetflixExtension";
 import { devConsole } from "./services/devConsole";
 import { Sidebar } from "./components/Sidebar";
@@ -117,6 +120,12 @@ export default function App() {
   const [downloads, setDownloads] = useState<DownloadEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isReloading, setIsReloading] = useState(false);
+  const [authState, setAuthState] = useState<"checking" | "setup" | "locked" | "unlocked">("checking");
+  const [profileUsername, setProfileUsername] = useState("");
+  const [authError, setAuthError] = useState("");
+  const authStateRef = useRef<"checking" | "setup" | "locked" | "unlocked">("checking");
+  authStateRef.current = authState;
+  const profileCreatedRef = useRef(false);
   const tabHistoryRef = useRef<string[]>([HOME_TAB_ID]);
 
   useEffect(() => {
@@ -146,6 +155,7 @@ export default function App() {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
   const [isVideoFullscreen, setIsVideoFullscreen] = useState(false);
   const wasMaximizedBeforeVideoFs = useRef(false);
+  const usedNativeVideoFullscreen = useRef(false);
 
   // ── Refs ──────────────────────────────────────────────────────────
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -159,10 +169,47 @@ export default function App() {
   const tabsRef = useRef(tabs);
   const activeTabIdRef = useRef(activeTabId);
   const pendingFrontendNavRef = useRef<Record<string, { url: string; at: number }>>({});
+  const loadingFallbackTimerRef = useRef<number | null>(null);
+  const pageLoadTraceRef = useRef<Record<string, { traceId: string; step: number; seen: Set<string> }>>({});
   const isClosingRef = useRef(false);
   const storageLoadedRef = useRef(false);
 
   const { toasts, showToast, dismissToast } = useToasts();
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<{ configured: boolean; username?: string }>("profile_status")
+      .then((status) => {
+        if (cancelled) return;
+        setProfileUsername(status.username || "");
+        setAuthState(status.configured ? "locked" : "setup");
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setAuthError(String(error));
+        setAuthState("setup");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleCreateProfile = useCallback(async (username: string, password: string) => {
+    await invoke("create_profile", { username, password });
+    setDatabasePassword(password);
+    profileCreatedRef.current = true;
+    setProfileUsername(username);
+    setAuthError("");
+    setAuthState("unlocked");
+  }, []);
+
+  const handleUnlock = useCallback(async (password: string) => {
+    const username = await invoke<string>("verify_profile", { password });
+    setDatabasePassword(password);
+    setProfileUsername(username);
+    setAuthError("");
+    setAuthState("unlocked");
+  }, []);
 
   // ── Workspaces & Filtered Tabs ────────────────────────────────────
 
@@ -363,6 +410,7 @@ export default function App() {
     splitRightRef,
     panelContentRef,
     getActiveTab: () => activeTabRef.current,
+    getFocusedTabs: () => tabsRef.current.filter((tab) => tab.focused),
     getSplitTabs: (): SplitActiveTabs => {
       const s = splitStateRef.current;
       if (!s) return null;
@@ -384,6 +432,7 @@ export default function App() {
 
   // ── Persistence ───────────────────────────────────────────────────
   useEffect(() => {
+    if (authState !== "unlocked") return;
     let cancelled = false;
     async function load() {
       devConsole.initGlobalInterceptors();
@@ -436,7 +485,11 @@ export default function App() {
           activeWorkspace: wsIdData,
         },
       });
-      setSettings(settingsData);
+      const loadedSettings = profileCreatedRef.current
+        ? { ...settingsData, homeGreeting: profileUsername }
+        : settingsData;
+      setSettings(loadedSettings);
+      if (profileCreatedRef.current) void saveSettings(loadedSettings);
       const startBehavior = settingsData.startupBehavior || "previous";
       if (startBehavior === "home") {
         const activeWs = wsIdData || "personal";
@@ -501,7 +554,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authState, profileUsername]);
 
   // ── Reactive download manager subscription ─────────────────────────
   useEffect(() => {
@@ -608,6 +661,7 @@ export default function App() {
     void getCurrentWindow()
       .onCloseRequested(async (event) => {
         if (isClosingRef.current) return;
+        if (authState !== "unlocked") return;
         event.preventDefault();
         isClosingRef.current = true;
 
@@ -634,10 +688,20 @@ export default function App() {
           });
         }
 
-        // At-rest protection: mirror plaintext DB to DPAPI-encrypted Aegis.db.enc
+        // Close SQLite before removing its plaintext file from disk.
         try {
-          await encryptDbAtRest(false);
-        } catch {}
+          await closeDatabase();
+          const encrypted = await encryptDbAtRest(true);
+          if (!encrypted) {
+            throw new Error("Database encryption did not complete");
+          }
+        } catch (error) {
+          isClosingRef.current = false;
+          await debugLog(`[DEBUG H1] database protection failed: ${error instanceof Error ? error.message : String(error)}`);
+          console.error("Failed to protect database before close:", error);
+          devConsole.system("Database Protection Failed", String(error), { error });
+          return;
+        }
 
         try {
           await getCurrentWindow().close();
@@ -661,7 +725,7 @@ export default function App() {
       disposed = true;
       unlistenClose?.();
     };
-  }, []);
+  }, [authState]);
 
   // Keep active tab valid within visible tabs
   useEffect(() => {
@@ -791,6 +855,38 @@ export default function App() {
   useEffect(() => {
     let disposed = false;
     const cleanups: Array<() => void> = [];
+    const logPageStep = (
+      label: string | undefined,
+      url: string | undefined,
+      stage: string,
+      message: string,
+      level: "info" | "success" | "warn" | "error" = "info",
+    ) => {
+      if (!label) return;
+      const key = label;
+      const current = pageLoadTraceRef.current[key] || {
+        traceId: `${Date.now().toString(36)}-${label}`,
+        step: 0,
+        seen: new Set<string>(),
+      };
+      if (current.seen.has(stage)) return;
+      current.seen.add(stage);
+      current.step += 1;
+      pageLoadTraceRef.current[key] = current;
+      devConsole.webview({
+        level,
+        title: `Page Load · ${stage}`,
+        message,
+        url,
+        label,
+        details: {
+          loadTraceId: current.traceId,
+          step: current.step,
+          stage,
+          status: level === "error" || level === "warn" ? "unfinished" : "finished",
+        },
+      });
+    };
 
     void listen<string>("Aegis-tab-pointerdown", () => {
       if (!disposed) {
@@ -803,16 +899,85 @@ export default function App() {
       }
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
-    void listen<string>("Aegis-page-load-started", () => {
-      if (!disposed) setIsLoading(true);
+    void listen<{ label?: string; url?: string }>("Aegis-page-url", (event) => {
+      if (disposed) return;
+      const { label, url } = event.payload || {};
+      if (!url || url === "about:blank") return;
+      const owner = label ? tabsRef2.current.find((tab) => tab.label === label) : activeTabRef.current;
+      if (!owner || owner.url === url) return;
+      markTabUrlLoaded(owner.id, url);
+      setTabs((prev) => prev.map((tab) => {
+        if (tab.id !== owner.id) return tab;
+        const knownIndex = tab.history.lastIndexOf(url);
+        if (knownIndex >= 0) {
+          return { ...tab, url, index: knownIndex, title: titleFromUrl(url) };
+        }
+        const history = tab.history.slice(0, tab.index + 1);
+        history.push(url);
+        return { ...tab, url, index: history.length - 1, history, title: titleFromUrl(url) };
+      }));
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+
+    void listen<{ label?: string; url?: string } | string>("Aegis-page-load-started", (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      const url = typeof payload === "string" ? payload : payload?.url;
+      const label = typeof payload === "string"
+        ? tabsRef2.current.find((tab) => tab.url === payload)?.label
+        : payload?.label;
+      if (label) {
+        pageLoadTraceRef.current[label] = {
+          traceId: `${Date.now().toString(36)}-${label}`,
+          step: 0,
+          seen: new Set<string>(),
+        };
+      }
+      logPageStep(label, url, "navigation-started", "WebView navigation started");
+      setIsLoading(true);
+      if (loadingFallbackTimerRef.current !== null) {
+        window.clearTimeout(loadingFallbackTimerRef.current);
+      }
+      // Some sites keep a request open forever or replace the document before
+      // the injected ready signal can run. Never leave the browser stuck.
+      loadingFallbackTimerRef.current = window.setTimeout(() => {
+        loadingFallbackTimerRef.current = null;
+        const active = activeTabRef.current;
+        logPageStep(active?.label, active?.url, "readiness-timeout", "DOM/app readiness signal was not received before the fallback deadline", "warn");
+        if (!disposed) setIsLoading(false);
+      }, 8000);
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+
+    void listen<{ label?: string; url?: string; stage?: string }>("Aegis-page-stage", (event) => {
+      const payload = event.payload || {};
+      if (!payload.stage) return;
+      const names: Record<string, string> = {
+        "dom-interactive": "DOM interactive",
+        "window-load": "Window load",
+      };
+      logPageStep(payload.label, payload.url, names[payload.stage] || payload.stage, `Page reported ${payload.stage}`);
+    }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
+
+    void listen<{ label?: string; url?: string }>("Aegis-page-ready", (event) => {
+      if (!disposed) setIsLoading(false);
+      if (loadingFallbackTimerRef.current !== null) {
+        window.clearTimeout(loadingFallbackTimerRef.current);
+        loadingFallbackTimerRef.current = null;
+      }
+      const payload = event.payload || {};
+      logPageStep(payload.label, payload.url, "app-ready", "DOM/app readiness signal received", "success");
+      if (!payload.url || payload.url === "about:blank") return;
+      const owner = payload.label
+        ? tabsRef2.current.find((tab) => tab.label === payload.label)
+        : activeTabRef.current;
+      if (owner) markTabUrlLoaded(owner.id, payload.url);
     }).then((fn) => (disposed ? fn() : cleanups.push(fn)));
 
     void listen<{ label?: string; url?: string } | string>("Aegis-page-load-finished", (event) => {
       if (!disposed) {
-        setIsLoading(false);
         const payload = event.payload;
         const url = typeof payload === "string" ? payload : payload?.url;
         const label = typeof payload === "object" && payload !== null ? payload.label : undefined;
+        logPageStep(label, url, "native-navigation-completed", "Native WebView navigation completed");
         if (url && url !== "about:blank") {
           const pending = label ? pendingFrontendNavRef.current[label] : undefined;
           if (pending && pending.url !== url && Date.now() - pending.at < 3000) {
@@ -921,8 +1086,20 @@ export default function App() {
     // Video fullscreen — child webview video entered/exited fullscreen (viewport, not OS window)
     void listen<{ enter: boolean; label: string }>("Aegis-fullscreen", (event) => {
       if (disposed) return;
+      // Ignore fullscreen notifications emitted while the auth gate is still
+      // mounted. A stale child-webview event must not hide the browser shell
+      // immediately after unlock.
+      if (authStateRef.current !== "unlocked") return;
       const enter = !!(event.payload as any)?.enter;
       const label = (event.payload as any)?.label as string | undefined;
+      // Protected streaming pages must never enter Aegis's host-resize path.
+      // A stale event from an older injected page can otherwise restart the
+      // provider's DRM surface and leave Netflix on its splash screen.
+      const activeUrl = activeTabRef.current?.url || "";
+      if (/(^|\.)netflix\.com(\/|$)|(^|\.)crunchyroll\.com(\/|$)/i.test(activeUrl)) {
+        setIsVideoFullscreen(false);
+        return;
+      }
       if (enter && label) {
         // Only a visible tab may take over the window chrome — ignore
         // fullscreen requests from background tabs.
@@ -939,6 +1116,8 @@ export default function App() {
         }
         if (!owned) return;
       }
+      // Never pause/replay protected media around the host resize. Netflix
+      // may reject the post-resize play() call and remain on its splash logo.
       setIsVideoFullscreen(enter);
       // Ensure webview bounds fill viewport when fullscreen (hide chrome/sidebar via CSS)
       setTimeout(() => void scheduleSyncActive(), 50);
@@ -947,6 +1126,10 @@ export default function App() {
 
     return () => {
       disposed = true;
+      if (loadingFallbackTimerRef.current !== null) {
+        window.clearTimeout(loadingFallbackTimerRef.current);
+        loadingFallbackTimerRef.current = null;
+      }
       for (const fn of cleanups) fn();
     };
   }, []);
@@ -954,9 +1137,22 @@ export default function App() {
   // ── Webview sync effects ──────────────────────────────────────────
 
   useEffect(() => {
-    if (isClosingRef.current) return;
-    void syncActive();
-  }, [activeTabId, activeTab.kind, activeTab.url, activeWorkspaceId]);
+    if (isClosingRef.current || authState !== "unlocked") return;
+    // The auth gate can be shown while a previous child webview or fullscreen
+    // event is still settling. Never let that transient state cover the newly
+    // mounted browser shell after unlock.
+    setIsVideoFullscreen(false);
+    document.documentElement.classList.remove("aegis-video-fullscreen");
+    // The auth gate unmounts and the browser layout mounts in the same React
+    // commit. Native child webviews can otherwise be positioned while the
+    // content element still reports a zero-sized rectangle and remain hidden.
+    const timers = [0, 60, 220, 600, 1200].map((delay) =>
+      window.setTimeout(() => {
+        if (!isClosingRef.current) void syncActive();
+      }, delay),
+    );
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [authState, activeTabId, activeTab.kind, activeTab.url, activeTab.focused, activeWorkspaceId, syncActive]);
 
   useEffect(() => {
     if (isClosingRef.current) return;
@@ -1020,44 +1216,77 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("aegis-video-fullscreen", isVideoFullscreen);
     const w = getCurrentWindow();
+    const syncTimers: number[] = [];
+    const syncAfterWindowChange = () => {
+      // Windows can report fullscreen before the child HWND receives its new
+      // monitor-sized client area. Re-sync across the resize settling window.
+      [0, 50, 150, 300, 600, 1000].forEach((delay) => {
+        syncTimers.push(window.setTimeout(() => void scheduleSyncActive(), delay));
+      });
+      const tab = activeTabRef.current;
+      if (tab?.url && /(^|\.)netflix\.com(\/|$)/i.test(tab.url)) {
+        const resume = "try{document.querySelectorAll('video').forEach(function(v){if(v.__aegisWasPlaying){delete v.__aegisWasPlaying;var p=v.play();if(p&&p.catch)p.catch(function(){});}});}catch(_){}";
+        syncTimers.push(window.setTimeout(() => {
+          void invoke("eval_in_webview", { label: tab.label, script: resume }).catch(() => undefined);
+        }, 700));
+      }
+    };
     if (isVideoFullscreen) {
       // Remember current window state so we can restore it on exit
       void (async () => {
         try {
-          wasMaximizedBeforeVideoFs.current = await w.isMaximized();
-          // On Windows, going from maximized → fullscreen can glitch in
-          // some WebView2 versions, so unmaximize first.
-          if (wasMaximizedBeforeVideoFs.current) {
-            await w.unmaximize();
+          const activeUrl = activeTabRef.current?.url || "";
+          const isNetflix = /(^|\.)netflix\.com(\/|$)/i.test(activeUrl);
+          // Netflix protected media can lose its DRM surface when the host
+          // window switches into Windows fullscreen. Keep the existing host
+          // window and use viewport fullscreen for Netflix instead.
+          usedNativeVideoFullscreen.current = !isNetflix;
+          if (isNetflix) {
+            // Clear a native fullscreen state left by another tab/session.
+            // Netflix must never hide the Windows taskbar or resize its DRM
+            // surface through the host window transition.
+            if (await w.isFullscreen()) {
+              await w.setFullscreen(false);
+            }
+          } else if (usedNativeVideoFullscreen.current) {
+            wasMaximizedBeforeVideoFs.current = await w.isMaximized();
+            // On Windows, going from maximized -> fullscreen can glitch in
+            // some WebView2 versions, so unmaximize first.
+            if (wasMaximizedBeforeVideoFs.current) {
+              await w.unmaximize();
+            }
+            await w.setFullscreen(true);
           }
-          await w.setFullscreen(true);
         } catch {
           // Fallback — at worst we get the old viewport-only behavior
         }
-        void scheduleSyncActive();
-        setTimeout(() => void scheduleSyncActive(), 220);
+        syncAfterWindowChange();
       })();
     } else {
       // Exit OS fullscreen and restore previous window state
       void (async () => {
         try {
+          // Always clear stale OS fullscreen. A Netflix/DRM transition can
+          // leave the native window fullscreen even though the webview state
+          // correctly says video fullscreen is inactive.
           const isFs = await w.isFullscreen();
           if (isFs) {
             await w.setFullscreen(false);
             // Give OS a moment to restore the window frame before re-maximizing
-            if (wasMaximizedBeforeVideoFs.current) {
+            if (usedNativeVideoFullscreen.current && wasMaximizedBeforeVideoFs.current) {
               setTimeout(async () => {
                 try { await w.maximize(); } catch { /* ignore */ }
               }, 100);
             }
           }
+          usedNativeVideoFullscreen.current = false;
         } catch {
           // ignore
         }
-        void scheduleSyncActive();
-        setTimeout(() => void scheduleSyncActive(), 220);
+        syncAfterWindowChange();
       })();
     }
+    return () => syncTimers.forEach((timer) => window.clearTimeout(timer));
   }, [isVideoFullscreen, scheduleSyncActive]);
 
   // Leaving a fullscreen video tab exits its fake fullscreen so the chrome
@@ -1169,6 +1398,9 @@ export default function App() {
       current.map((item) => {
         if (item.id !== id) return item;
         const history = item.history.slice(0, item.index + 1);
+        if (history[history.length - 1] === url) {
+          return { ...item, kind: "web", url, index: history.length - 1 };
+        }
         history.push(url);
         return {
           ...item,
@@ -1598,6 +1830,11 @@ export default function App() {
 
   // ── Native Context Menus (Website Remains 100% Visible) ───────────
 
+  const toggleTabFocus = useCallback((tabId: string) => {
+    setTabs((current) => current.map((tab) => tab.id === tabId ? { ...tab, focused: !tab.focused } : tab));
+    setTimeout(() => void scheduleSyncActive(), 0);
+  }, [scheduleSyncActive]);
+
   const handleOpenContextMenu = useCallback(
     async (data: ContextMenuData) => {
       try {
@@ -1631,6 +1868,10 @@ export default function App() {
             await MenuItem.new({
               text: "Duplicate Tab",
               action: () => duplicateTab(tab),
+            }),
+            await MenuItem.new({
+              text: tab.focused ? "Remove Focus" : "Focus",
+              action: () => toggleTabFocus(tab.id),
             }),
             await PredefinedMenuItem.new({ item: "Separator" }),
           ];
@@ -1747,7 +1988,7 @@ export default function App() {
         devConsole.frontend("error", "Context Menu Failed", String(err), { error: err }, err instanceof Error ? err.stack : undefined);
       }
     },
-    [tabGroups, activeTabId, activeWorkspaceId, tabs, visibleTabs],
+    [tabGroups, activeTabId, activeWorkspaceId, tabs, visibleTabs, toggleTabFocus],
   );
 
   // ── Voice & QR ────────────────────────────────────────────────────
@@ -1922,6 +2163,18 @@ export default function App() {
   const panelPushWidth = isPanelPinned && activePanel ? panelWidth : 0;
 
   // ── Render ────────────────────────────────────────────────────────
+
+  if (authState !== "unlocked") {
+    return (
+      <AuthGate
+        mode={authState === "setup" ? "setup" : "unlock"}
+        username={profileUsername}
+        error={authError}
+        onSetup={handleCreateProfile}
+        onUnlock={handleUnlock}
+      />
+    );
+  }
 
   return (
     <div

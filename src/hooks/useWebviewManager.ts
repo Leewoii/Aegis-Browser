@@ -12,6 +12,64 @@ import { devConsole } from "../services/devConsole";
 
 const RESIZE_RAF_DEBOUNCE = 0;
 
+const FOCUS_LOCK_SCRIPT = `(() => {
+  const state = window.__aegisFocusLockState || (window.__aegisFocusLockState = { locked: false, originals: {} });
+  state.locked = true;
+  if (state.installed) return;
+  state.installed = true;
+  state.originals.hasFocus = Document.prototype.hasFocus;
+  state.originals.windowHasFocus = window.hasFocus;
+  state.originals.windowFocus = window.focus;
+  state.originals.hidden = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+  state.originals.visibilityState = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState');
+  state.originals.webkitVisibilityState = Object.getOwnPropertyDescriptor(Document.prototype, 'webkitVisibilityState');
+  state.originals.webkitHidden = Object.getOwnPropertyDescriptor(Document.prototype, 'webkitHidden');
+  state.originals.mozHidden = Object.getOwnPropertyDescriptor(Document.prototype, 'mozHidden');
+  Document.prototype.hasFocus = () => true;
+  window.hasFocus = () => true;
+  window.focus = () => undefined;
+  Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: () => false });
+  Object.defineProperty(Document.prototype, 'visibilityState', { configurable: true, get: () => 'visible' });
+  try { Object.defineProperty(Document.prototype, 'webkitVisibilityState', { configurable: true, get: () => 'visible' }); } catch (_) {}
+  try { Object.defineProperty(Document.prototype, 'webkitHidden', { configurable: true, get: () => false }); } catch (_) {}
+  try { Object.defineProperty(Document.prototype, 'mozHidden', { configurable: true, get: () => false }); } catch (_) {}
+  const blockedEvents = [
+    'visibilitychange', 'webkitvisibilitychange', 'mozvisibilitychange',
+    'pagehide', 'mouseenter', 'mouseleave', 'focusin', 'focusout', 'focus', 'blur',
+  ];
+  const swallow = (event) => {
+    if (!state.locked || !blockedEvents.includes(event.type)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    event.stopPropagation();
+  };
+  state.swallow = swallow;
+  state.blockedEvents = blockedEvents;
+  for (const target of [window, document, document.documentElement, document.body].filter(Boolean)) {
+    for (const eventName of blockedEvents) target.addEventListener(eventName, swallow, true);
+  }
+})();`;
+
+const FOCUS_UNLOCK_SCRIPT = `(() => {
+  const state = window.__aegisFocusLockState;
+  if (!state) return;
+  state.locked = false;
+  if (!state.installed) return;
+  const blockedEvents = state.blockedEvents || [];
+  for (const target of [window, document, document.documentElement, document.body].filter(Boolean)) {
+    for (const eventName of blockedEvents) target.removeEventListener(eventName, state.swallow, true);
+  }
+  if (state.originals.hidden) Object.defineProperty(Document.prototype, 'hidden', state.originals.hidden);
+  if (state.originals.visibilityState) Object.defineProperty(Document.prototype, 'visibilityState', state.originals.visibilityState);
+  if (state.originals.webkitVisibilityState) Object.defineProperty(Document.prototype, 'webkitVisibilityState', state.originals.webkitVisibilityState);
+  if (state.originals.webkitHidden) Object.defineProperty(Document.prototype, 'webkitHidden', state.originals.webkitHidden);
+  if (state.originals.mozHidden) Object.defineProperty(Document.prototype, 'mozHidden', state.originals.mozHidden);
+  Document.prototype.hasFocus = state.originals.hasFocus;
+  window.hasFocus = state.originals.windowHasFocus;
+  window.focus = state.originals.windowFocus;
+  state.installed = false;
+})();`;
+
 export type SplitActiveTabs = {
   left: Tab;
   right: Tab;
@@ -24,6 +82,7 @@ interface WebviewManagerOptions {
   splitRightRef?: React.RefObject<HTMLDivElement | null>;
   panelContentRef: React.RefObject<HTMLDivElement | null>;
   getActiveTab: () => Tab | null;
+  getFocusedTabs?: () => Tab[];
   getSplitTabs?: () => SplitActiveTabs;
   activePanelRef: React.MutableRefObject<PanelId | null>;
   isOverlayActiveRef?: React.MutableRefObject<boolean>;
@@ -68,6 +127,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     splitRightRef,
     panelContentRef,
     getActiveTab,
+    getFocusedTabs,
     getSplitTabs,
     activePanelRef,
     isOverlayActiveRef,
@@ -136,6 +196,9 @@ export function useWebviewManager(options: WebviewManagerOptions) {
         dataDirectory: `profiles/workspace_${wsId}`,
       });
       await waitForWebviewCreated(view);
+      // A child WebView can be created successfully while still remaining
+      // hidden until its first explicit show call on Windows.
+      await view.show();
       tabWebviewsRef.current[tab.id] = view;
       lastLoadedUrlRef.current[tab.id] = tab.url;
       // #region DEBUG
@@ -212,6 +275,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
         dataDirectory: `profiles/panel_${active}`,
       });
       await waitForWebviewCreated(view);
+      await view.show();
       panelWebviewRef.current = view;
       panelWebviewPanelRef.current = active;
       return;
@@ -235,6 +299,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
     const run = async () => {
       const tab = getActiveTab();
       const splitTabs = getSplitTabs?.() ?? null;
+      const isVideoFullscreen = document.documentElement.classList.contains("aegis-video-fullscreen");
 
       // #region DEBUG
       await debugLog(
@@ -248,6 +313,19 @@ export function useWebviewManager(options: WebviewManagerOptions) {
         activeIds.add(splitTabs.right.id);
       } else if (tab) {
         activeIds.add(tab.id);
+      }
+
+      for (const focusedTab of getFocusedTabs?.() ?? []) {
+        const focusedWebview = tabWebviewsRef.current[focusedTab.id];
+        if (!focusedWebview) continue;
+        try {
+          await invoke("eval_in_webview", {
+            label: focusedTab.label,
+            script: focusedTab.focused ? FOCUS_LOCK_SCRIPT : FOCUS_UNLOCK_SCRIPT,
+          });
+        } catch {
+          // The webview may be between creation and navigation.
+        }
       }
 
       // Hide ALL webviews that are not active in this frame
@@ -303,7 +381,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
               await wv.show();
               // Check if URL changed and navigate immediately
               const prevUrl = lastLoadedUrlRef.current[paneTab.id];
-              if (paneTab.url && prevUrl !== paneTab.url) {
+              if (paneTab.url && prevUrl !== paneTab.url && !isVideoFullscreen) {
                 lastLoadedUrlRef.current[paneTab.id] = paneTab.url;
                 void invoke("allow_navigation", { label: paneTab.label, url: paneTab.url })
                   .then(() => invoke("navigate_webview", { label: paneTab.label, url: paneTab.url }))
@@ -339,14 +417,33 @@ export function useWebviewManager(options: WebviewManagerOptions) {
         return;
       }
 
-      // Round outward to prevent sub-pixel bleeding over sidebar/chrome borders
-      // Inset 4px from window's right/bottom edges so HTML resize handles remain hit-testable
-      // (native webview would otherwise cover them, making bottom/right resizing impossible)
-      const RESIZE_INSET = 4;
-      let left = Math.ceil(rect.left);
-      const top = Math.ceil(rect.top);
-      let width = Math.max(0, Math.floor(rect.right) - left - RESIZE_INSET);
-      const height = Math.max(0, Math.floor(rect.bottom) - top - RESIZE_INSET);
+      // Round outward to prevent sub-pixel bleeding over sidebar/chrome borders.
+      // During video fullscreen the native child must own the entire client area:
+      // leaving the normal resize inset or stale DOM bounds can make the video
+      // paint correctly while its controls miss pointer hit-testing until the
+      // next playback repaint.
+      // A native child webview is always painted above the React surface. Do
+      // not create or move it while the auth gate/layout transition reports a
+      // full-window or top-left rectangle; that transient rectangle would
+      // cover the browser chrome and look like a blank unlock screen.
+      if (!isVideoFullscreen && (
+        rect.left < 1 ||
+        rect.top < 1 ||
+        rect.width >= window.innerWidth - 1 ||
+        rect.height >= window.innerHeight - 1
+      )) {
+        await syncPanelWebview();
+        return;
+      }
+      const RESIZE_INSET = isVideoFullscreen ? 0 : 4;
+      let left = isVideoFullscreen ? 0 : Math.ceil(rect.left);
+      const top = isVideoFullscreen ? 0 : Math.ceil(rect.top);
+      let width = isVideoFullscreen
+        ? Math.max(0, Math.floor(window.innerWidth))
+        : Math.max(0, Math.floor(rect.right) - left - RESIZE_INSET);
+      const height = isVideoFullscreen
+        ? Math.max(0, Math.floor(window.innerHeight))
+        : Math.max(0, Math.floor(rect.bottom) - top - RESIZE_INSET);
 
       // If Tools & AI side panel is open as overlay (unpinned), it sits on top of the viewport.
       // Native tab webviews are HWND child windows that render above HTML regardless of z-index,
@@ -372,7 +469,7 @@ export function useWebviewManager(options: WebviewManagerOptions) {
           await existingWv.show();
           // Check if URL changed and navigate immediately
           const prevUrl = lastLoadedUrlRef.current[tab.id];
-          if (tab.url && prevUrl !== tab.url) {
+          if (tab.url && prevUrl !== tab.url && !isVideoFullscreen) {
             lastLoadedUrlRef.current[tab.id] = tab.url;
             void invoke("allow_navigation", { label: tab.label, url: tab.url })
               .then(() => invoke("navigate_webview", { label: tab.label, url: tab.url }))

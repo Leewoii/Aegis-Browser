@@ -505,9 +505,9 @@ const PLAYER_SCRIPT: &str = r#"
         css.id='__aegis_fs_style';
         css.textContent='html.aegis-video-fullscreen body{overflow:hidden!important;background:#000!important;margin:0!important}'
           + '#__aegis_fs_backdrop{position:fixed!important;inset:0!important;top:0!important;left:0!important;right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;background:#000!important;z-index:2147483646!important;margin:0!important;padding:0!important;border:0!important}'
-          + 'html.aegis-video-fullscreen .aegis-native-fullscreen{position:fixed!important;inset:0!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;max-width:100vw!important;max-height:100vh!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;z-index:2147483647!important;background:#000!important;display:flex!important;align-items:center!important;justify-content:center!important;flex-direction:column!important;overflow:hidden!important}'
-          + 'html.aegis-video-fullscreen .aegis-native-fullscreen video,html.aegis-video-fullscreen video.aegis-native-fullscreen-inner{width:100%!important;height:100%!important;max-width:100vw!important;max-height:100vh!important;object-fit:contain!important;background:#000!important;margin:0!important}'
-          + 'html.aegis-video-fullscreen video:fullscreen,html.aegis-video-fullscreen video:-webkit-full-screen{width:100vw!important;height:100vh!important;object-fit:contain!important;background:#000!important}';
+          + 'html.aegis-video-fullscreen .aegis-native-fullscreen{position:fixed!important;inset:0!important;top:0!important;left:0!important;width:100vw!important;height:100vh!important;max-width:100vw!important;max-height:100vh!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;z-index:2147483647!important;background:#000!important;overflow:hidden!important;pointer-events:auto!important}'
+          + 'html.aegis-video-fullscreen .aegis-native-fullscreen video,html.aegis-video-fullscreen video.aegis-native-fullscreen-inner{pointer-events:auto!important}'
+          + 'html.aegis-video-fullscreen video:fullscreen,html.aegis-video-fullscreen video:-webkit-full-screen{pointer-events:auto!important}';
         (document.head||document.documentElement).appendChild(css);
       }catch(_){}
     }
@@ -539,13 +539,17 @@ const PLAYER_SCRIPT: &str = r#"
           var all=el.querySelectorAll ? el.querySelectorAll('video') : [];
           for(var i=0;i<all.length;i++){ try{ all[i].classList.add('aegis-native-fullscreen-inner'); }catch(_){} }
         }catch(_){}
+        // Force a layout pass without changing the site's video dimensions.
+        // YouTube and Netflix own their compositor sizing and repaint logic;
+        // overriding the video rectangle can leave controls visible over a
+        // stale/blank video surface.
         try{
-          var old=document.getElementById('__aegis_fs_backdrop');
-          if(old&&old.parentNode) old.parentNode.removeChild(old);
-          var bd=document.createElement('div');
-          bd.id='__aegis_fs_backdrop';
-          (document.body||document.documentElement).appendChild(bd);
+          void el.offsetWidth;
+          if(video){ void video.offsetWidth; }
         }catch(_){}
+        // The document and body are already forced black by fsEnsureStyle.
+        // Do not insert a backdrop above the player: nested stacking contexts
+        // can otherwise leave the video rendering underneath a black layer.
         fsNotify(true);
         setTimeout(fsDispatch, 0);
         return Promise.resolve();
@@ -693,6 +697,39 @@ const PLAYER_SCRIPT: &str = r#"
       setTimeout(function(){ if(a && a.parentNode) a.parentNode.removeChild(a); }, 100);
     } catch(_){}
   }
+  function sxNotifyUrl() {
+    try {
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://page-url?url=' + encodeURIComponent(window.location.href) + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function(){ if(a && a.parentNode) a.parentNode.removeChild(a); }, 100);
+    } catch(_){}
+  }
+  var sxReadySent = false;
+  function sxNotifyReady() {
+    try {
+      if (sxReadySent || (document.readyState !== 'interactive' && document.readyState !== 'complete')) return;
+      sxReadySent = true;
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://page-ready?url=' + encodeURIComponent(window.location.href) + '&state=' + encodeURIComponent(document.readyState) + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function(){ if(a && a.parentNode) a.parentNode.removeChild(a); }, 100);
+    } catch(_){}
+  }
+  function sxNotifyStage(stage) {
+    try {
+      var a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = 'sx-internal://page-stage?stage=' + encodeURIComponent(stage) + '&url=' + encodeURIComponent(window.location.href) + '&t=' + Date.now();
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(function(){ if(a && a.parentNode) a.parentNode.removeChild(a); }, 100);
+    } catch(_){}
+  }
   if (document.readyState === 'complete') sxNotifyTitle();
   else window.addEventListener('load', sxNotifyTitle, {once:true});
   // Observe title element changes (SPA navigations update document.title without reload)
@@ -707,56 +744,26 @@ const PLAYER_SCRIPT: &str = r#"
   } catch(_){}
   setTimeout(sxNotifyTitle, 800);
   setTimeout(sxNotifyTitle, 2000);
+  if (document.readyState === 'complete') sxNotifyUrl();
+  else window.addEventListener('load', sxNotifyUrl, {once:true});
+  ['pushState', 'replaceState'].forEach(function(method){
+    try {
+      var original = history[method];
+      history[method] = function(){ var result = original.apply(this, arguments); setTimeout(sxNotifyUrl, 0); return result; };
+    } catch(_){ }
+  });
+  window.addEventListener('popstate', sxNotifyUrl);
+  window.addEventListener('hashchange', sxNotifyUrl);
+  document.addEventListener('DOMContentLoaded', function(){ sxNotifyStage('dom-interactive'); }, {once:true});
+  window.addEventListener('load', function(){ sxNotifyStage('window-load'); }, {once:true});
+  if (document.readyState === 'complete') {
+    setTimeout(sxNotifyReady, 250);
+  } else {
+    document.addEventListener('DOMContentLoaded', function(){ setTimeout(sxNotifyReady, 700); }, {once:true});
+    window.addEventListener('load', function(){ setTimeout(sxNotifyReady, 250); }, {once:true});
+    setTimeout(sxNotifyReady, 3000);
+  }
 
-  // 6. Fix YouTube service worker navigation preload cancelled + preload unused warnings (skeleton)
-  (function(){
-    // Disable navigation preload which causes "preloadResponse was cancelled" when service worker doesn't use waitUntil
-    try{
-      if('serviceWorker' in navigator){
-        navigator.serviceWorker.ready.then(function(reg){
-          try{ if(reg.navigationPreload) reg.navigationPreload.disable().catch(function(){}); }catch(e){}
-        }).catch(function(){});
-        // Patch future registrations
-        try{
-          var origReg = navigator.serviceWorker.register;
-          if(origReg){
-            navigator.serviceWorker.register = function(){
-              var p = origReg.apply(this, arguments);
-              p.then(function(reg){ try{ if(reg.navigationPreload) reg.navigationPreload.disable().catch(function(){}); }catch(e){} }).catch(function(){});
-              return p;
-            };
-          }
-        }catch(e){}
-      }
-    }catch(e){}
-    // Remove the two YouTube preload links that are never used in WebView2 (generate_204 + kevlar_base) to silence warnings
-    // The HAR shows they are fetched but not used due to service worker cache, causing "was preloaded but not used"
-    try{
-      var sel='link[rel="preload"][href*="generate_204"], link[rel="preload"][href*="kevlar_base"], link[rel="preload"][href*="ytmainappweb"]';
-      var fix = function(){
-        try{
-          document.querySelectorAll(sel).forEach(function(l){
-            // Instead of removing, change to prefetch + correct as to mark as used
-            try{ l.setAttribute('rel','prefetch'); }catch(e){ try{ l.remove(); }catch(e2){} }
-          });
-        }catch(e){}
-      };
-      if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', fix);
-      else fix();
-      // Also observe future added preloads
-      try{
-        new MutationObserver(function(muts){
-          muts.forEach(function(m){
-            m.addedNodes.forEach(function(n){
-              if(n.tagName==='LINK' && n.getAttribute('rel')==='preload' && (n.href.includes('generate_204')||n.href.includes('kevlar_base'))){
-                try{ n.setAttribute('rel','prefetch'); }catch(e){}
-              }
-            });
-          });
-        }).observe(document.head, {childList:true});
-      }catch(e){}
-    }catch(e){}
-  })();
 })();
 "#;
 

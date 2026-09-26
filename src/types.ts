@@ -23,6 +23,8 @@ export type Tab = {
   workspaceId?: string;
   pinned?: boolean;
   muted?: boolean;
+  /** Keep this tab's page-level focus/visibility signals active in the background. */
+  focused?: boolean;
   createdAt?: number;
   lastAccessedAt?: number;
 };

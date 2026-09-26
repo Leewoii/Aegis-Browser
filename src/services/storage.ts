@@ -35,6 +35,7 @@ type SqliteDatabase = Awaited<ReturnType<typeof Database.load>>;
 
 let db: SqliteDatabase | null = null;
 let initPromise: Promise<SqliteDatabase> | null = null;
+let dbPassword = "";
 type GlobalStorageState = {
   writeQueue: Promise<void>;
 };
@@ -55,7 +56,7 @@ function getWriteQueueState(): GlobalStorageState {
 
 async function ensureDbDecrypted(): Promise<void> {
   try {
-    const didDecrypt = await invoke<boolean>("decrypt_db");
+    const didDecrypt = await invoke<boolean>("decrypt_db", { password: dbPassword });
     if (didDecrypt) {
       devConsole.db({
         operation: "DECRYPT",
@@ -65,8 +66,9 @@ async function ensureDbDecrypted(): Promise<void> {
       });
     }
   } catch (e) {
-    // Non-fatal — if decrypt fails, fall back to plaintext DB
-    devConsole.frontend("warn", "DB Decrypt Skipped", String(e), { error: e });
+    // Never fall back to an existing plaintext database when encrypted data is present.
+    devConsole.frontend("error", "DB Decrypt Failed", String(e), { error: e });
+    throw e;
   }
 }
 
@@ -94,7 +96,7 @@ export async function getDb(): Promise<SqliteDatabase> {
           details: { status: "ready", atRestEncrypted: true },
         });
         // Best-effort: keep enc mirror updated after connect
-        void invoke("encrypt_db").catch(() => undefined);
+        void invoke("encrypt_db", { password: dbPassword }).catch(() => undefined);
         return database;
       })
       .catch((error) => {
@@ -115,7 +117,7 @@ export async function getDb(): Promise<SqliteDatabase> {
 export async function encryptDbAtRest(removePlain = false): Promise<boolean> {
   try {
     const cmd = removePlain ? "encrypt_db_and_remove_plain" : "encrypt_db";
-    const ok = await invoke<boolean>(cmd);
+    const ok = await invoke<boolean>(cmd, { password: dbPassword });
     if (ok) {
       devConsole.db({
         operation: "ENCRYPT",
@@ -129,6 +131,24 @@ export async function encryptDbAtRest(removePlain = false): Promise<boolean> {
     devConsole.frontend("error", "DB Encrypt Failed", String(e), { error: e });
     return false;
   }
+}
+
+export function setDatabasePassword(password: string): void {
+  dbPassword = password;
+}
+
+/** Flush queued writes and close SQLite before removing the runtime plaintext file. */
+export async function closeDatabase(): Promise<void> {
+  await getWriteQueueState().writeQueue;
+  if (!db) return;
+
+  const database = db;
+  const closed = await database.close();
+  if (!closed) {
+    throw new Error("SQLite database pool refused to close");
+  }
+  db = null;
+  initPromise = null;
 }
 
 export async function getDbEncryptionStatus(): Promise<string> {

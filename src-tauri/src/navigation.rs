@@ -26,25 +26,37 @@ fn is_managed_webview(label: &str) -> bool {
 /// The link/popup interceptor replaces some of those APIs, so leave these
 /// top-level pages untouched by the NAV script.
 ///
-/// NOTE: this gates ONLY link/popup interception. The PLAYER script
-/// (video fullscreen, shortcuts, title, error forwarding) must run on every
-/// site including these hosts — otherwise e.g. the Netflix fullscreen button
-/// hits unhandled native fullscreen and appears to do nothing.
-fn should_inject_nav_script(label: &str, page_url: &str) -> bool {
-  if !(label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-")) {
-    return false;
-  }
-
-  let protected_host = url::Url::parse(page_url)
+/// This also gates the player script for protected providers. Their DRM and
+/// fullscreen lifecycle must stay entirely inside the native WebView2 page.
+fn is_protected_streaming_host(page_url: &str) -> bool {
+  url::Url::parse(page_url)
     .ok()
     .and_then(|parsed| parsed.host_str().map(str::to_ascii_lowercase))
     .is_some_and(|host| {
       ["netflix.com", "crunchyroll.com"]
         .iter()
         .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
-    });
+    })
+}
 
-  !protected_host
+fn should_inject_nav_script(label: &str, page_url: &str) -> bool {
+  if !(label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-")) {
+    return false;
+  }
+
+  !is_protected_streaming_host(page_url)
+}
+
+fn should_inject_player_script(label: &str, page_url: &str) -> bool {
+  if !(label.starts_with("Aegis-tab-") || label.starts_with("Aegis-panel-")) {
+    return false;
+  }
+
+  // Netflix/Crunchyroll own their media, DRM, focus, and fullscreen lifecycle.
+  // Replacing document fullscreen prototypes after their app shell starts can
+  // leave the shell on its loading logo before the Encrypted Media session is
+  // created. Let these providers use WebView2's native APIs untouched.
+  !is_protected_streaming_host(page_url)
 }
 
 /// Redact sensitive query parameters (such as tokens, passwords, secrets) from URLs for logging.
@@ -203,6 +215,51 @@ pub fn aegis_navigation_plugin(
       }
 
       // Page title notification from child webview
+      if url_string.starts_with("sx-internal://page-url") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          if let Some(page_url) = parsed.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.to_string()) {
+            if !page_url.trim().is_empty() {
+              let _ = window.emit_to("main", "Aegis-page-url", serde_json::json!({ "url": page_url, "label": label }));
+            }
+          }
+        }
+        return false;
+      }
+
+      // Navigation completion is not the same as the site's app being ready.
+      if url_string.starts_with("sx-internal://page-ready") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          if let Some(page_url) = parsed.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.to_string()) {
+            println!("[Aegis-load] READY label={} url={}", label, redact_url(&page_url));
+            let _ = window.emit_to("main", "Aegis-page-ready", serde_json::json!({ "url": page_url, "label": label }));
+          }
+        }
+        return false;
+      }
+
+      // DOM/load milestones from the child page. These are diagnostics only;
+      // they never navigate the child webview.
+      if url_string.starts_with("sx-internal://page-stage") {
+        if let Ok(parsed) = url::Url::parse(&url_string) {
+          let mut stage = String::new();
+          let mut page_url = String::new();
+          for (key, value) in parsed.query_pairs() {
+            if key == "stage" { stage = value.to_string(); }
+            if key == "url" { page_url = value.to_string(); }
+          }
+          if !stage.is_empty() {
+            println!("[Aegis-load] STAGE label={} stage={} url={}", label, stage, redact_url(&page_url));
+            let _ = window.emit_to("main", "Aegis-page-stage", serde_json::json!({
+              "stage": stage,
+              "url": page_url,
+              "label": label
+            }));
+          }
+        }
+        return false;
+      }
+
+      // Page title notification from child webview
       if url_string.starts_with("sx-internal://page-title") {
         if let Ok(parsed) = url::Url::parse(&url_string) {
           let mut title: Option<String> = None;
@@ -257,6 +314,7 @@ pub fn aegis_navigation_plugin(
       if url_string.starts_with("sx-internal://fullscreen") {
         if let Ok(parsed) = url::Url::parse(&url_string) {
           let enter = parsed.query_pairs().find(|(k, _)| k == "enter").map(|(_, v)| v == "1").unwrap_or(false);
+          println!("[Aegis-fullscreen] REQUEST label={} enter={}", label, enter);
           let _ = window.emit_to("main", "Aegis-fullscreen", serde_json::json!({ "enter": enter, "label": label }));
         }
         return false;
@@ -342,16 +400,10 @@ pub fn aegis_navigation_plugin(
       match payload.event() {
         PageLoadEvent::Started => {
           println!("[Aegis-nav] PAGE_LOAD_STARTED label={} url={}", label, redact_url(&url));
-          let _ = webview.emit_to("main", "Aegis-page-load-started", &url);
-
-          if is_managed_webview(&label) {
-            // Player features (video fullscreen, shortcuts, ...) on every site.
-            let _ = webview.eval(player_script);
-            // Link/popup interception everywhere except protected streaming hosts.
-            if should_inject_nav_script(&label, &url) {
-              let _ = webview.eval(nav_script);
-            }
-          }
+          let _ = webview.emit_to("main", "Aegis-page-load-started", serde_json::json!({
+            "label": label,
+            "url": url
+          }));
         }
         PageLoadEvent::Finished => {
           let mut nav = state.lock().expect("navigation state poisoned");
@@ -374,11 +426,26 @@ pub fn aegis_navigation_plugin(
           }
 
           if is_managed_webview(&label) {
-            // Player features (video fullscreen, shortcuts, ...) on every site.
-            let _ = webview.eval(player_script);
+            // Inject only after the document finished loading. Running large
+            // prototype/navigation overrides during PageLoadEvent::Started
+            // can execute against the document being replaced and interfere
+            // with site bootstrap (notably YouTube's app shell).
+            if should_inject_player_script(&label, &url) {
+              if let Err(error) = webview.eval(player_script) {
+                println!("[Aegis-inject] PLAYER_FAILED label={} error={}", label, error);
+              }
+            } else {
+              println!("[Aegis-inject] PLAYER_SKIPPED label={} url={}", label, redact_url(&url));
+              // Protected streaming pages remain completely native. Any
+              // fullscreen bridge can cause Netflix to recreate its DRM
+              // surface and remain on the splash screen.
+              println!("[Aegis-inject] STREAMING_BRIDGE_SKIPPED label={} url={}", label, redact_url(&url));
+            }
             // Link/popup interception everywhere except protected streaming hosts.
             if should_inject_nav_script(&label, &url) {
-              let _ = webview.eval(nav_script);
+              if let Err(error) = webview.eval(nav_script) {
+                println!("[Aegis-inject] NAV_FAILED label={} error={}", label, error);
+              }
             }
           }
         }
