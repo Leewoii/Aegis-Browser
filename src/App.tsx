@@ -194,6 +194,14 @@ export default function App() {
     };
   }, []);
 
+  // The lock screen makes everything outside its card click-through.
+  // Unlocking must always restore normal mouse handling, even if the
+  // AuthGate unmount cleanup was skipped or raced with an in-flight update.
+  useEffect(() => {
+    if (authState !== "unlocked") return;
+    invoke("clear_clickthrough_hotzone").catch(() => undefined);
+  }, [authState]);
+
   const handleCreateProfile = useCallback(async (username: string, password: string) => {
     await invoke("create_profile", { username, password });
     setDatabasePassword(password);

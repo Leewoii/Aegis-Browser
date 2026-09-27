@@ -32,6 +32,9 @@ export function AuthGate({ mode, username, error, onSetup, onUnlock }: AuthGateP
         const rect = el.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return;
         const origin = await getCurrentWindow().outerPosition();
+        // Unlock may have unmounted us while awaiting: never re-arm
+        // click-through after cleanup ran.
+        if (cancelled || panelRef.current !== el) return;
         const dpr = window.devicePixelRatio || 1;
         await invoke("set_clickthrough_hotzone", {
           x: origin.x + rect.left * dpr,

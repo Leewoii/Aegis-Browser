@@ -13,14 +13,22 @@
 //! changes. Non-Windows builds compile to a no-op stub.
 
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Runtime, State};
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Hotzone {
+/// A hotzone that has not been refreshed for this long is considered stale
+/// (e.g. unlock cleanup raced with an in-flight update) and ignored, so the
+/// window can never stay click-through forever. The frontend refreshes every
+/// 500ms while the lock screen is mounted.
+const HOTZONE_STALE_AFTER: Duration = Duration::from_millis(2500);
+
+#[derive(Clone, Copy)]
+pub struct Hotzone {
   x: f64,
   y: f64,
   width: f64,
   height: f64,
+  updated_at: Instant,
 }
 
 impl Hotzone {
@@ -44,7 +52,13 @@ pub fn set_clickthrough_hotzone(
   if width <= 0.0 || height <= 0.0 {
     return Err("Hotzone must have a positive size".into());
   }
-  *state.0.lock().map_err(|e| e.to_string())? = Some(Hotzone { x, y, width, height });
+  *state.0.lock().map_err(|e| e.to_string())? = Some(Hotzone {
+    x,
+    y,
+    width,
+    height,
+    updated_at: Instant::now(),
+  });
   Ok(())
 }
 
@@ -101,7 +115,12 @@ pub fn spawn_clickthrough_watcher<R: Runtime>(app: AppHandle<R>) {
     loop {
       let hotzone: Option<Hotzone> = match app.try_state::<ClickthroughState>() {
         Some(state) => match state.0.lock() {
-          Ok(guard) => *guard,
+          // Drop stale hotzones: the lock screen refreshes every 500ms, so
+          // anything much older means its owner is gone (missed cleanup).
+          Ok(guard) => guard
+            .as_ref()
+            .filter(|zone| zone.updated_at.elapsed() < HOTZONE_STALE_AFTER)
+            .copied(),
           Err(_) => None,
         },
         None => None,
