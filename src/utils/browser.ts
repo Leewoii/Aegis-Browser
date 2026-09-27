@@ -31,19 +31,9 @@ export const GROUP_COLORS = [
 
 export const DEFAULT_WORKSPACES: Workspace[] = [
   { id: "personal", name: "Personal", icon: "user", color: "#6e9bff" },
-  { id: "development", name: "Development", icon: "code", color: "#a78bfa" },
-  { id: "cybersecurity", name: "Cybersecurity", icon: "shield", color: "#34d399" },
 ];
 
-export const DEFAULT_GROUPS: Record<string, TabGroup> = {
-  essentials: {
-    id: "essentials",
-    name: "Essentials",
-    color: "#6e9bff",
-    collapsed: true,
-    workspaceId: "personal",
-  },
-};
+export const DEFAULT_GROUPS: Record<string, TabGroup> = {};
 
 export function uid(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -155,24 +145,7 @@ export function makeWebTab(url: string, title?: string, group?: string, workspac
 }
 
 export function defaultTabs(): Tab[] {
-  const essentials = (url: string, title: string): Tab => ({
-    ...makeWebTab(url, title, "essentials", "personal"),
-    group: "essentials",
-  });
-  return [
-    // Personal Workspace tabs
-    essentials("https://www.youtube.com", "YouTube"),
-    essentials("https://notion.so", "Notion"),
-    essentials("https://mail.google.com", "Gmail"),
-    makeWebTab("https://dribbble.com", "Dribbble", undefined, "personal"),
-    makeHomeTab("personal"),
-
-    // Development Workspace tabs
-    makeWebTab("https://github.com", "GitHub", undefined, "development"),
-    makeWebTab("https://stackoverflow.com", "Stack Overflow", undefined, "development"),
-
-    // Cybersecurity Workspace tabs
-    makeWebTab("https://www.shodan.io", "Shodan", undefined, "cybersecurity"),
-    makeWebTab("https://www.exploit-db.com", "Exploit Database", undefined, "cybersecurity"),
-  ];
+  // Fresh profiles start blank: no preloaded tabs. Callers fall back to a
+  // home tab when the list is empty.
+  return [];
 }
