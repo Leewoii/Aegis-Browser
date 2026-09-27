@@ -1,5 +1,7 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { KeyRound, LockKeyhole, UserRound } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type AuthGateProps = {
   mode: "setup" | "unlock";
@@ -15,6 +17,44 @@ export function AuthGate({ mode, username, error, onSetup, onUnlock }: AuthGateP
   const [confirmation, setConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  // Floating lock screen: report the card rectangle (physical screen pixels)
+  // so the backend can make everything outside of it click-through.
+  // All Tauri calls are best-effort so this still renders in a plain browser.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function pushHotzone() {
+      try {
+        const el = panelRef.current;
+        if (!el || cancelled) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const origin = await getCurrentWindow().outerPosition();
+        const dpr = window.devicePixelRatio || 1;
+        await invoke("set_clickthrough_hotzone", {
+          x: origin.x + rect.left * dpr,
+          y: origin.y + rect.top * dpr,
+          width: rect.width * dpr,
+          height: rect.height * dpr,
+        });
+      } catch {
+        // Non-Tauri context (vite preview): no click-through, panel still works.
+      }
+    }
+
+    void pushHotzone();
+    const timer = window.setInterval(() => void pushHotzone(), 500);
+    window.addEventListener("resize", pushHotzone);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("resize", pushHotzone);
+      // Unlocking unmounts this screen: restore normal mouse handling.
+      invoke("clear_clickthrough_hotzone").catch(() => undefined);
+    };
+  }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -40,7 +80,7 @@ export function AuthGate({ mode, username, error, onSetup, onUnlock }: AuthGateP
 
   return (
     <main className="auth-gate">
-      <section className="auth-gate-panel" aria-labelledby="auth-title">
+      <section ref={panelRef} className="auth-gate-panel" aria-labelledby="auth-title">
         <div className="auth-gate-mark" aria-hidden>
           {mode === "setup" ? <KeyRound size={22} /> : <LockKeyhole size={22} />}
         </div>

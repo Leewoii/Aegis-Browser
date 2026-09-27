@@ -1,3 +1,4 @@
+mod clickthrough;
 mod commands;
 mod download;
 mod injection;
@@ -27,6 +28,11 @@ pub fn run() {
     .manage(navigation::NavigationState(Arc::clone(&navigation_state)))
     .manage(download_state)
     .manage(terminal_state)
+    .manage(clickthrough::ClickthroughState(std::sync::Mutex::new(None)))
+    .setup(|app| {
+      clickthrough::spawn_clickthrough_watcher(app.handle().clone());
+      Ok(())
+    })
     .plugin(tauri_plugin_sql::Builder::default().build())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
@@ -37,6 +43,8 @@ pub fn run() {
     ))
     .invoke_handler(tauri::generate_handler![
       commands::allow_navigation,
+      clickthrough::set_clickthrough_hotzone,
+      clickthrough::clear_clickthrough_hotzone,
       commands::navigate_webview,
       commands::set_webview_muted,
       commands::eval_in_webview,

@@ -1490,8 +1490,9 @@
   display: grid;
   place-items: center;
   padding: 32px;
-  background: var(--bg-window);
+  background: transparent;
   color: var(--text-primary);
+  pointer-events: none;
 }
 
 .auth-gate-panel {
@@ -1500,7 +1501,8 @@
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   background: var(--bg-elevated);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
 }
 
 .auth-gate-mark {
