@@ -1,5 +1,6 @@
 mod clickthrough;
 mod commands;
+mod db;
 mod download;
 mod injection;
 mod navigation;
@@ -29,11 +30,11 @@ pub fn run() {
     .manage(download_state)
     .manage(terminal_state)
     .manage(clickthrough::ClickthroughState(std::sync::Mutex::new(None)))
+    .manage(db::DbState::default())
     .setup(|app| {
       clickthrough::spawn_clickthrough_watcher(app.handle().clone());
       Ok(())
     })
-    .plugin(tauri_plugin_sql::Builder::default().build())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_dialog::init())
     .plugin(navigation::aegis_navigation_plugin(
@@ -45,6 +46,11 @@ pub fn run() {
       commands::allow_navigation,
       clickthrough::set_clickthrough_hotzone,
       clickthrough::clear_clickthrough_hotzone,
+      db::db_open,
+      db::db_close,
+      db::db_execute,
+      db::db_query,
+      db::db_status,
       commands::navigate_webview,
       commands::set_webview_muted,
       commands::eval_in_webview,
@@ -53,9 +59,6 @@ pub fn run() {
       security::encrypt_secret,
       security::decrypt_secret,
       security::decrypt_db,
-      security::encrypt_db,
-      security::encrypt_db_and_remove_plain,
-      security::db_encryption_status,
       security::profile_status,
       security::create_profile,
       security::verify_profile,

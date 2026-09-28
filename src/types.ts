@@ -126,6 +126,7 @@ export type Settings = {
   startupBehavior: "home" | "previous";
   defaultDownloadsPath: string;
   adBlockingEnabled: boolean;
+  maxDownloadConnections: number;
 };
 
 export type ToastType = "info" | "error" | "success";

@@ -1,6 +1,7 @@
 import { Pause, Play, RotateCcw, Trash2, X, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 import type { DownloadEntry } from "../../types";
 import { formatBytes } from "../../utils/format";
+import { downloadManager } from "../../services/downloads";
 
 interface DownloadsPanelProps {
   downloads: DownloadEntry[];
@@ -25,6 +26,38 @@ function formatEta(totalBytes: number, receivedBytes: number, speed?: number): s
   return `${hours}h ${mins}m left`;
 }
 
+type SegmentSnapshot = { start: number; end: number; downloaded: number };
+
+/** IDM-style per-connection strip: one block per segment, width ∝ byte
+ * share, blue fill = completion, pink left edge = segment start. */
+function SegmentStrip({ segments, total }: { segments: SegmentSnapshot[]; total: number }) {
+  if (segments.length <= 1 || total <= 0) return null;
+  const sorted = [...segments].sort((a, b) => a.start - b.start);
+  return (
+    <div
+      className="download-segments"
+      role="img"
+      aria-label={`${sorted.length} download connections`}
+    >
+      {sorted.map((s, i) => {
+        const len = Math.max(1, s.end - s.start + 1);
+        const done = Math.min(Math.max(0, s.downloaded), len);
+        const fillPct = (done / len) * 100;
+        return (
+          <div
+            key={i}
+            className="download-seg"
+            style={{ width: `${(len / total) * 100}%` }}
+            title={`Connection ${i + 1} · ${formatBytes(s.start)}–${formatBytes(s.end)} · ${fillPct.toFixed(0)}%`}
+          >
+            <div className="download-seg-fill" style={{ width: `${fillPct}%` }} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function DownloadsPanel({
   downloads,
   onPause,
@@ -33,9 +66,9 @@ export function DownloadsPanel({
   onRetry,
   onDelete,
 }: DownloadsPanelProps) {
-  const getStateBadge = (dl: DownloadEntry) => {
+  const getStateBadge = (dl: DownloadEntry, liveSegCount: number) => {
     const state = dl.state || (dl.completed ? "completed" : "in_progress");
-    const conn = (dl as any).connections || (state === "in_progress" && dl.totalBytes > 2 * 1024 * 1024 ? 8 : 1);
+    const conn = liveSegCount > 1 ? liveSegCount : ((dl as any).connections || (state === "in_progress" && dl.totalBytes > 2 * 1024 * 1024 ? 8 : 1));
     switch (state) {
       case "completed":
         return (
@@ -79,10 +112,17 @@ export function DownloadsPanel({
         {downloads.length === 0 && <div className="list-empty">No downloads yet.</div>}
         {downloads.map((dl) => {
           const state = dl.state || (dl.completed ? "completed" : "in_progress");
-          const pct = dl.totalBytes > 0 ? (dl.receivedBytes / dl.totalBytes) * 100 : 0;
+          const knownTotal = dl.totalBytes > 0;
+          const pct = knownTotal ? (dl.receivedBytes / dl.totalBytes) * 100 : 0;
           const eta = state === "in_progress" ? formatEta(dl.totalBytes, dl.receivedBytes, dl.speed) : null;
           const speedStr =
             state === "in_progress" && dl.speed && dl.speed > 0 ? `${formatBytes(dl.speed)}/s` : null;
+          const liveSegments = downloadManager.getSegments(dl.id);
+          const showSegments =
+            liveSegments.length > 1 && (state === "in_progress" || state === "paused");
+          // Unknown total: no percentage exists — show an indeterminate
+          // busy bar instead of an empty track.
+          const indeterminate = state === "in_progress" && !knownTotal;
 
           return (
             <div key={dl.id} className="download-row" style={{ padding: "10px 12px" }}>
@@ -90,18 +130,24 @@ export function DownloadsPanel({
                 <div className="download-title" style={{ maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {dl.filename}
                 </div>
-                <div>{getStateBadge(dl)}</div>
+                <div>{getStateBadge(dl, liveSegments.length)}</div>
               </div>
 
               <div className="download-bar" style={{ margin: "6px 0" }}>
                 <div
-                  className={`download-bar-fill ${state === "completed" ? "done" : ""}`}
-                  style={{
-                    width: `${state === "completed" ? 100 : Math.min(pct, 100)}%`,
-                    background: state === "failed" ? "#ef4444" : state === "paused" ? "#f59e0b" : undefined,
-                  }}
+                  className={`download-bar-fill ${state === "completed" ? "done" : ""} ${indeterminate ? "indeterminate" : ""}`}
+                  style={
+                    indeterminate
+                      ? undefined
+                      : {
+                          width: `${state === "completed" ? 100 : Math.min(pct, 100)}%`,
+                          background: state === "failed" ? "#ef4444" : state === "paused" ? "#f59e0b" : undefined,
+                        }
+                  }
                 />
               </div>
+
+              {showSegments && <SegmentStrip segments={liveSegments} total={dl.totalBytes} />}
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                 <div className="download-status" style={{ fontSize: 11 }}>

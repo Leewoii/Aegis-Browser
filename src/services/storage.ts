@@ -2,7 +2,6 @@
  * SQLite-backed persistent storage service with schema migrations,
  * OS-backed DPAPI encryption, atomic transactions, and profile recovery.
  */
-import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Tab,
@@ -31,7 +30,27 @@ import {
 import { debugLog } from "./debug";
 import { devConsole } from "./devConsole";
 
-type SqliteDatabase = Awaited<ReturnType<typeof Database.load>>;
+/**
+ * SQLCipher-backed database handle. The file (and WAL) is always ciphertext;
+ * the key comes from the unlock password via `db_open` — there is no
+ * decrypt-to-plaintext step. Same call shape as the old sql plugin so all
+ * query code below is untouched.
+ */
+type SqliteDatabase = {
+  execute: (sql: string, params?: unknown[]) => Promise<number>;
+  select: <T>(sql: string, params?: unknown[]) => Promise<T>;
+  close: () => Promise<boolean>;
+};
+
+async function openDatabase(): Promise<SqliteDatabase> {
+  await invoke("db_open", { password: dbPassword });
+  return {
+    execute: (sql, params = []) => invoke<number>("db_execute", { sql, params }),
+    select: <T>(sql: string, params: unknown[] = []): Promise<T> =>
+      invoke<T>("db_query", { sql, params }),
+    close: () => invoke<boolean>("db_close"),
+  };
+}
 
 let db: SqliteDatabase | null = null;
 let initPromise: Promise<SqliteDatabase> | null = null;
@@ -54,24 +73,6 @@ function getWriteQueueState(): GlobalStorageState {
   return globalStorageState.__AegisStorageState!;
 }
 
-async function ensureDbDecrypted(): Promise<void> {
-  try {
-    const didDecrypt = await invoke<boolean>("decrypt_db", { password: dbPassword });
-    if (didDecrypt) {
-      devConsole.db({
-        operation: "DECRYPT",
-        tableOrQuery: "Aegis.db.enc -> Aegis.db",
-        status: "success",
-        details: { atRest: "decrypted for session" },
-      });
-    }
-  } catch (e) {
-    // Never fall back to an existing plaintext database when encrypted data is present.
-    devConsole.frontend("error", "DB Decrypt Failed", String(e), { error: e });
-    throw e;
-  }
-}
-
 export async function getDb(): Promise<SqliteDatabase> {
   if (db) return db;
   if (!initPromise) {
@@ -80,23 +81,28 @@ export async function getDb(): Promise<SqliteDatabase> {
       operation: "CONNECT",
       tableOrQuery: "sqlite:Aegis.db",
       status: "success",
-      details: { db: "Aegis.db (DPAPI at-rest: Aegis.db.enc)" },
+      details: { db: "Aegis.db (SQLCipher, always encrypted)" },
     });
     initPromise = (async () => {
-      await ensureDbDecrypted();
-      return Database.load("sqlite:Aegis.db");
+      // db_open applies the unlock-password key, migrates legacy stores,
+      // and creates a fresh encrypted DB on first run. No plaintext step.
+      return openDatabase();
     })()
-      .then((database) => {
+      .then(async (database) => {
         db = database;
         devConsole.setDbStatus("connected");
+        try {
+          const status = await invoke<string>("db_status");
+          await debugLog(`[DEBUG H1] db open ok ${status}`);
+        } catch {
+          // status is best-effort; connection already established
+        }
         devConsole.db({
           operation: "CONNECTED",
           tableOrQuery: "sqlite:Aegis.db",
           status: "success",
           details: { status: "ready", atRestEncrypted: true },
         });
-        // Best-effort: keep enc mirror updated after connect
-        void invoke("encrypt_db", { password: dbPassword }).catch(() => undefined);
         return database;
       })
       .catch((error) => {
@@ -114,30 +120,17 @@ export async function getDb(): Promise<SqliteDatabase> {
   return initPromise;
 }
 
-export async function encryptDbAtRest(removePlain = false): Promise<boolean> {
-  try {
-    const cmd = removePlain ? "encrypt_db_and_remove_plain" : "encrypt_db";
-    const ok = await invoke<boolean>(cmd, { password: dbPassword });
-    if (ok) {
-      devConsole.db({
-        operation: "ENCRYPT",
-        tableOrQuery: "Aegis.db -> Aegis.db.enc",
-        status: "success",
-        details: { atRest: "encrypted", removePlain },
-      });
-    }
-    return ok;
-  } catch (e) {
-    devConsole.frontend("error", "DB Encrypt Failed", String(e), { error: e });
-    return false;
-  }
+export async function encryptDbAtRest(_removePlain = false): Promise<boolean> {
+  // No-op: with SQLCipher the file (and WAL) is always ciphertext — there is
+  // no plaintext to encrypt and no mirror to maintain. Kept for callers.
+  return true;
 }
 
 export function setDatabasePassword(password: string): void {
   dbPassword = password;
 }
 
-/** Flush queued writes and close SQLite before removing the runtime plaintext file. */
+/** Flush queued writes and close SQLite (checkpointed; file stays encrypted). */
 export async function closeDatabase(): Promise<void> {
   await getWriteQueueState().writeQueue;
   if (!db) return;
@@ -145,7 +138,7 @@ export async function closeDatabase(): Promise<void> {
   const database = db;
   const closed = await database.close();
   if (!closed) {
-    throw new Error("SQLite database pool refused to close");
+    throw new Error("SQLite database refused to close");
   }
   db = null;
   initPromise = null;
@@ -153,7 +146,7 @@ export async function closeDatabase(): Promise<void> {
 
 export async function getDbEncryptionStatus(): Promise<string> {
   try {
-    return await invoke<string>("db_encryption_status");
+    return await invoke<string>("db_status");
   } catch {
     return "unknown";
   }
@@ -198,100 +191,109 @@ async function retryLockedWrite<T>(operation: () => Promise<T>, attempts = 3): P
 // ---------------------------------------------------------------------------
 
 async function migrateV1ToV2(database: SqliteDatabase): Promise<void> {
-  await database.execute(
-    `
-      CREATE TABLE IF NOT EXISTS workspaces (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        icon TEXT,
-        color TEXT,
-        idx INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS tab_groups (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        color TEXT,
-        collapsed INTEGER NOT NULL DEFAULT 0,
-        workspace_id TEXT NOT NULL DEFAULT 'personal',
-        idx INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS tabs_v2 (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        title TEXT NOT NULL,
-        url TEXT NOT NULL DEFAULT '',
-        label TEXT NOT NULL,
-        history TEXT NOT NULL DEFAULT '[]',
-        idx INTEGER NOT NULL DEFAULT 0,
-        workspace_id TEXT NOT NULL DEFAULT 'personal',
-        group_id TEXT,
-        pinned INTEGER NOT NULL DEFAULT 0,
-        muted INTEGER NOT NULL DEFAULT 0,
-        created_at INTEGER NOT NULL DEFAULT 0,
-        last_accessed_at INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS sidebar_state (
-        key TEXT PRIMARY KEY,
-        is_sidebar_pinned INTEGER NOT NULL DEFAULT 0,
-        active_panel TEXT,
-        is_panel_pinned INTEGER NOT NULL DEFAULT 0,
-        panel_width INTEGER NOT NULL DEFAULT 340,
-        muted_panels TEXT NOT NULL DEFAULT '[]',
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS session_state (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS closed_tabs (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        url TEXT NOT NULL,
-        tab_data TEXT NOT NULL,
-        closed_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS secure_vault (
-        key TEXT PRIMARY KEY,
-        ciphertext TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS downloads_v2 (
-        id TEXT PRIMARY KEY,
-        filename TEXT NOT NULL,
-        url TEXT NOT NULL,
-        destination TEXT,
-        total_bytes REAL NOT NULL DEFAULT 0,
-        received_bytes REAL NOT NULL DEFAULT 0,
-        state TEXT NOT NULL DEFAULT 'completed',
-        started_at INTEGER NOT NULL DEFAULT 0,
-        completed_at INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        url TEXT NOT NULL,
-        title TEXT NOT NULL DEFAULT '',
-        visited_at INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS bookmarks (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL DEFAULT '',
-        url TEXT NOT NULL,
-        created_at INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-    `,
-  );
+  // NOTE: one statement per execute(). The rusqlite backend prepares a single
+  // statement per call, so a multi-statement batch would silently create only
+  // the first table and leave the rest missing (killing init on next access).
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS workspaces (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      icon TEXT,
+      color TEXT,
+      idx INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS tab_groups (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      color TEXT,
+      collapsed INTEGER NOT NULL DEFAULT 0,
+      workspace_id TEXT NOT NULL DEFAULT 'personal',
+      idx INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS tabs_v2 (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL DEFAULT '',
+      label TEXT NOT NULL,
+      history TEXT NOT NULL DEFAULT '[]',
+      idx INTEGER NOT NULL DEFAULT 0,
+      workspace_id TEXT NOT NULL DEFAULT 'personal',
+      group_id TEXT,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      muted INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL DEFAULT 0,
+      last_accessed_at INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS sidebar_state (
+      key TEXT PRIMARY KEY,
+      is_sidebar_pinned INTEGER NOT NULL DEFAULT 0,
+      active_panel TEXT,
+      is_panel_pinned INTEGER NOT NULL DEFAULT 0,
+      panel_width INTEGER NOT NULL DEFAULT 340,
+      muted_panels TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS session_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS closed_tabs (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      tab_data TEXT NOT NULL,
+      closed_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS secure_vault (
+      key TEXT PRIMARY KEY,
+      ciphertext TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS downloads_v2 (
+      id TEXT PRIMARY KEY,
+      filename TEXT NOT NULL,
+      url TEXT NOT NULL,
+      destination TEXT,
+      total_bytes REAL NOT NULL DEFAULT 0,
+      received_bytes REAL NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT 'completed',
+      started_at INTEGER NOT NULL DEFAULT 0,
+      completed_at INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      visited_at INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS bookmarks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      url TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS host_limits (
+      host TEXT PRIMARY KEY,
+      max_conn INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`,
+  ];
+  for (const sql of tables) {
+    await database.execute(sql);
+  }
 
   // 1. Migrate Workspaces from meta table if workspaces table is empty
   const wsCount = await database.select<[{ count: number }]>("SELECT COUNT(*) AS count FROM workspaces");
@@ -997,6 +999,10 @@ export async function loadSettings(): Promise<Settings> {
     else if (row.key === "startupBehavior") settings.startupBehavior = row.value as Settings["startupBehavior"];
     else if (row.key === "defaultDownloadsPath") settings.defaultDownloadsPath = row.value;
     else if (row.key === "adBlockingEnabled") settings.adBlockingEnabled = row.value === "true";
+    else if (row.key === "maxDownloadConnections") {
+      const n = parseInt(row.value, 10);
+      if (Number.isFinite(n)) settings.maxDownloadConnections = Math.min(16, Math.max(1, n));
+    }
   }
   return settings;
 }
@@ -1010,6 +1016,47 @@ export async function saveSettings(settings: Settings): Promise<void> {
     await upsertSetting(database, "startupBehavior", settings.startupBehavior);
     await upsertSetting(database, "defaultDownloadsPath", settings.defaultDownloadsPath);
     await upsertSetting(database, "adBlockingEnabled", settings.adBlockingEnabled ? "true" : "false");
+    await upsertSetting(database, "maxDownloadConnections", String(settings.maxDownloadConnections ?? 8));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Per-host download connection limits (politeness overrides)
+// ---------------------------------------------------------------------------
+
+async function ensureHostLimitsTable(database: SqliteDatabase): Promise<void> {
+  await database.execute(
+    "CREATE TABLE IF NOT EXISTS host_limits (host TEXT PRIMARY KEY, max_conn INTEGER NOT NULL, updated_at INTEGER NOT NULL)",
+  );
+}
+
+/** Per-host connection cap, or null when the global setting applies. */
+export async function loadHostConnectionLimit(host: string): Promise<number | null> {
+  const database = await getDb();
+  await ensureHostLimitsTable(database);
+  const rows = await database.select<Array<{ max_conn: number }>>(
+    "SELECT max_conn FROM host_limits WHERE host = $1",
+    [host.toLowerCase()],
+  );
+  if (rows.length === 0) return null;
+  const n = Number(rows[0].max_conn);
+  return Number.isFinite(n) ? Math.min(16, Math.max(1, Math.floor(n))) : null;
+}
+
+/** Set (or with null, clear) a per-host connection cap. */
+export async function saveHostConnectionLimit(host: string, maxConn: number | null): Promise<void> {
+  return enqueueWrite(async () => {
+    const database = await getDb();
+    await ensureHostLimitsTable(database);
+    if (maxConn === null) {
+      await database.execute("DELETE FROM host_limits WHERE host = $1", [host.toLowerCase()]);
+    } else {
+      const n = Math.min(16, Math.max(1, Math.floor(maxConn)));
+      await database.execute(
+        "INSERT OR REPLACE INTO host_limits (host, max_conn, updated_at) VALUES ($1, $2, $3)",
+        [host.toLowerCase(), n, Date.now()],
+      );
+    }
   });
 }
 

@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct DownloadProgressPayload {
@@ -46,6 +46,109 @@ pub struct DownloadControlFile {
   pub total: u64,
   pub segments: Vec<SegmentState>,
   pub etag: Option<String>,
+}
+
+// ── Tuning: single source of truth for connection planning ────────────
+/// Minimum file size worth segmenting at all.
+const SEGMENT_MIN_BYTES: u64 = 1024 * 1024;
+/// Below this size a single connection is used.
+const TIER_SINGLE_MAX: u64 = 2 * 1024 * 1024;
+/// Below this size 4 connections are used, otherwise 8 (IDM default).
+const TIER_QUAD_MAX: u64 = 10 * 1024 * 1024;
+/// Never split a remainder smaller than this (IDM "too small to split" rule).
+const MIN_SPLIT_REMAINING: u64 = 256 * 1024;
+/// Progress-event throttle per worker.
+const PROGRESS_EMIT_MS: u128 = 150;
+/// Control-file persist throttle per worker.
+const CONTROL_SAVE_MS: u128 = 800;
+/// Single-stream progress throttle (time- or size-based).
+const SINGLE_EMIT_MS: u128 = 120;
+const SINGLE_EMIT_BYTES: usize = 64 * 1024;
+/// Resume overlap window (IDM corruption guard): re-fetch this many bytes
+/// before the resume point and compare with what is on disk.
+const OVERLAP_BYTES: u64 = 32 * 1024;
+/// Attempts per segment fetch (initial + retries for transient failures).
+const SEGMENT_ATTEMPTS: u32 = 3;
+/// Worker error when the origin file changed mid-download (HTTP 412).
+const ERR_SOURCE_CHANGED: &str = "Source changed during download (412 Precondition Failed)";
+/// Worker error when the requested range is no longer satisfiable (HTTP 416).
+const ERR_RANGE_UNSATISFIABLE: &str = "Range not satisfiable (416) — source changed";
+/// Worker error when a resumed segment fails overlap verification twice.
+const ERR_OVERLAP_MISMATCH: &str = "Overlap verification failed twice; stored data does not match server";
+
+/// Back off between segment attempts. Returns false when paused/cancelled
+/// during the wait (caller should yield immediately).
+async fn retry_backoff(attempt: u32, cancel: &Arc<Mutex<bool>>, pause: &Arc<Mutex<bool>>) -> bool {
+  let ms = std::cmp::min(500 * attempt as u64 * attempt as u64, 5000);
+  tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+  !(cancel.lock().map(|v| *v).unwrap_or(true) || pause.lock().map(|v| *v).unwrap_or(true))
+}
+
+fn persist_segment_progress(
+  segs: &Arc<Mutex<Vec<SegmentState>>>,
+  idx: usize,
+  downloaded: u64,
+) {
+  if let Ok(mut guard) = segs.lock() {
+    if idx < guard.len() {
+      guard[idx].downloaded = downloaded;
+    }
+  }
+}
+
+/// Verify whole-file hashes advertised by the server (no-op when absent).
+/// Runs off the async runtime (blocking file read) via spawn_blocking.
+async fn verify_file_hashes(dest: PathBuf, hashes: FileHashes) -> Result<(), String> {
+  if hashes.md5.is_none() && hashes.sha256.is_none() {
+    return Ok(());
+  }
+  tokio::task::spawn_blocking(move || {
+    let data = std::fs::read(&dest).map_err(|e| format!("Verify read: {e}"))?;
+    if let Some(expected) = &hashes.md5 {
+      let got = <md5::Md5 as md5::Digest>::digest(&data);
+      if got.as_slice() != expected.as_slice() {
+        return Err("MD5 mismatch — file corrupted".to_string());
+      }
+    }
+    if let Some(expected) = &hashes.sha256 {
+      let got = <sha2::Sha256 as sha2::Digest>::digest(&data);
+      if got.as_slice() != expected.as_slice() {
+        return Err("SHA-256 mismatch — file corrupted".to_string());
+      }
+    }
+    Ok(())
+  })
+  .await
+  .map_err(|e| e.to_string())?
+}
+
+/// Emit terminal corruption: file deleted, frontend shows retry distinctly.
+fn emit_corrupt(app: &AppHandle, id: &str, dest: &Path, error: String) {
+  let _ = std::fs::remove_file(dest);
+  remove_control(dest);
+  let _ = app.emit(
+    "download-corrupt",
+    DownloadErrorPayload { id: id.to_string(), error },
+  );
+}
+
+/// How many parallel connections a download may open.
+/// Returns 1 when the server ignores ranges or the file is too small —
+/// callers fall back to single-stream in that case. `cap` is the
+/// user/host-configured ceiling (default 8, IDM-style).
+fn connection_plan(total: u64, accept_ranges: bool, cap: i32) -> i32 {
+  let cap = cap.clamp(1, 16);
+  if !accept_ranges || total < SEGMENT_MIN_BYTES {
+    return 1;
+  }
+  let tiered = if total < TIER_SINGLE_MAX {
+    1
+  } else if total < TIER_QUAD_MAX {
+    4
+  } else {
+    8
+  };
+  tiered.min(cap)
 }
 
 #[allow(dead_code)]
@@ -167,10 +270,94 @@ fn parse_content_disposition_filename(cd: &str) -> Option<String> {
   None
 }
 
-async fn probe_file(
-  client: &reqwest::Client,
-  url: &str,
-) -> (Option<u64>, bool, Option<String>, Option<String>) {
+/// Conditional-request validators captured at probe time.
+#[derive(Debug, Clone, Default)]
+struct RequestValidators {
+  etag: Option<String>,
+  last_modified: Option<String>,
+}
+
+/// Whole-file integrity hashes advertised by the server (if any).
+#[derive(Debug, Clone, Default)]
+struct FileHashes {
+  md5: Option<Vec<u8>>,
+  sha256: Option<Vec<u8>>,
+}
+
+struct ProbeResult {
+  total: Option<u64>,
+  accept_ranges: bool,
+  validators: RequestValidators,
+  cd_filename: Option<String>,
+  hashes: FileHashes,
+}
+
+fn decode_b64_hash(s: &str, len: usize) -> Option<Vec<u8>> {
+  use base64::Engine as _;
+  base64::engine::general_purpose::STANDARD
+    .decode(s.trim())
+    .ok()
+    .filter(|b| b.len() == len)
+}
+
+/// Parses `Digest` / `x-goog-hash` style `k=b64, k=b64` values.
+fn parse_kv_hashes(value: &str) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+  let mut md5 = None;
+  let mut sha256 = None;
+  for part in value.split(',') {
+    let mut kv = part.splitn(2, '=');
+    match (kv.next(), kv.next()) {
+      (Some(k), Some(v)) => match k.trim().to_ascii_lowercase().as_str() {
+        "md5" => {
+          if md5.is_none() {
+            md5 = decode_b64_hash(v, 16);
+          }
+        }
+        "sha-256" | "sha256" => {
+          if sha256.is_none() {
+            sha256 = decode_b64_hash(v, 32);
+          }
+        }
+        _ => {}
+      },
+      _ => {}
+    }
+  }
+  (md5, sha256)
+}
+
+fn extract_hashes(headers: &reqwest::header::HeaderMap, hashes: &mut FileHashes) {
+  if hashes.md5.is_none() {
+    if let Some(v) = headers.get("content-md5").and_then(|h| h.to_str().ok()) {
+      hashes.md5 = decode_b64_hash(v, 16);
+    }
+  }
+  if hashes.md5.is_none() || hashes.sha256.is_none() {
+    for name in ["digest", "x-goog-hash"] {
+      if let Some(v) = headers.get(name).and_then(|h| h.to_str().ok()) {
+        let (m, s) = parse_kv_hashes(v);
+        if hashes.md5.is_none() {
+          hashes.md5 = m;
+        }
+        if hashes.sha256.is_none() {
+          hashes.sha256 = s;
+        }
+      }
+    }
+  }
+}
+
+fn extract_validators(headers: &reqwest::header::HeaderMap) -> RequestValidators {
+  RequestValidators {
+    etag: headers.get("etag").and_then(|v| v.to_str().ok()).map(|s| s.to_string()),
+    last_modified: headers
+      .get("last-modified")
+      .and_then(|v| v.to_str().ok())
+      .map(|s| s.to_string()),
+  }
+}
+
+async fn probe_file(client: &reqwest::Client, url: &str) -> ProbeResult {
   // Try HEAD first
   if let Ok(resp) = client.head(url).send().await {
     let total = resp.content_length();
@@ -180,22 +367,20 @@ async fn probe_file(
       .and_then(|v| v.to_str().ok())
       .map(|s| s.to_lowercase().contains("bytes"))
       .unwrap_or(false);
-    let etag = resp
-      .headers()
-      .get("etag")
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
+    let validators = extract_validators(resp.headers());
     let cd_filename = resp
       .headers()
       .get("content-disposition")
       .and_then(|v| v.to_str().ok())
       .and_then(parse_content_disposition_filename);
+    let mut hashes = FileHashes::default();
+    extract_hashes(resp.headers(), &mut hashes);
     if total.is_some() {
-      return (total, accept_ranges, etag, cd_filename);
+      return ProbeResult { total, accept_ranges, validators, cd_filename, hashes };
     }
     // Even if no length, return what we have
-    if accept_ranges || etag.is_some() {
-      return (total, accept_ranges, etag, cd_filename);
+    if accept_ranges || validators.etag.is_some() {
+      return ProbeResult { total, accept_ranges, validators, cd_filename, hashes };
     }
   }
   // Fallback: Range probe bytes=0-0 to test 206 support and get Content-Range
@@ -210,36 +395,32 @@ async fn probe_file(
         // Content-Range: bytes 0-0/12345
         if let Some(slash) = cr.find('/') {
           if let Ok(total) = cr[slash + 1..].parse::<u64>() {
-            let etag = resp
-              .headers()
-              .get("etag")
-              .and_then(|v| v.to_str().ok())
-              .map(|s| s.to_string());
+            let validators = extract_validators(resp.headers());
             let cd_filename = resp
               .headers()
               .get("content-disposition")
               .and_then(|v| v.to_str().ok())
               .and_then(parse_content_disposition_filename);
-            return (Some(total), true, etag, cd_filename);
+            let mut hashes = FileHashes::default();
+            extract_hashes(resp.headers(), &mut hashes);
+            return ProbeResult { total: Some(total), accept_ranges: true, validators, cd_filename, hashes };
           }
         }
       }
     }
     // If 200 on range probe, server ignores Range
     let total = resp.content_length();
-    let etag = resp
-      .headers()
-      .get("etag")
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
+    let validators = extract_validators(resp.headers());
     let cd_filename = resp
       .headers()
       .get("content-disposition")
       .and_then(|v| v.to_str().ok())
       .and_then(parse_content_disposition_filename);
-    return (total, false, etag, cd_filename);
+    let mut hashes = FileHashes::default();
+    extract_hashes(resp.headers(), &mut hashes);
+    return ProbeResult { total, accept_ranges: false, validators, cd_filename, hashes };
   }
-  (None, false, None, None)
+  ProbeResult { total: None, accept_ranges: false, validators: RequestValidators::default(), cd_filename: None, hashes: FileHashes::default() }
 }
 
 fn load_control(dest: &Path) -> Option<DownloadControlFile> {
@@ -247,14 +428,23 @@ fn load_control(dest: &Path) -> Option<DownloadControlFile> {
   if !cp.exists() {
     return None;
   }
-  let data = std::fs::read_to_string(&cp).ok()?;
-  serde_json::from_str(&data).ok()
+  let data = std::fs::read(&cp).ok()?;
+  // Control files hold URLs: stored DPAPI-encrypted. Accept legacy plaintext
+  // (pre-encryption) once, then re-saved encrypted on next write.
+  let json_bytes: Vec<u8> = match crate::security::win_dpapi::unprotect(&data) {
+    Ok(plain) => plain,
+    Err(_) => data,
+  };
+  let text = String::from_utf8(json_bytes).ok()?;
+  serde_json::from_str(&text).ok()
 }
 
 fn save_control(dest: &Path, ctrl: &DownloadControlFile) {
   let cp = control_path(dest);
-  if let Ok(data) = serde_json::to_string_pretty(ctrl) {
-    let _ = std::fs::write(cp, data);
+  if let Ok(data) = serde_json::to_vec(ctrl) {
+    // DPAPI-wrap so resume state (URLs, filenames) is never plaintext.
+    let stored = crate::security::win_dpapi::protect(&data).unwrap_or(data);
+    let _ = std::fs::write(cp, stored);
   }
 }
 
@@ -274,17 +464,25 @@ async fn download_single(
   pause: Arc<Mutex<bool>>,
   resume_offset: u64,
   total: u64,
+  validators: RequestValidators,
+  mut hashes: FileHashes,
 ) -> Result<(), String> {
   let mut request = client.get(&url);
   if resume_offset > 0 {
     request = request.header("Range", format!("bytes={}-", resume_offset));
+    if let Some(ref et) = validators.etag {
+      request = request.header("If-Match", et.clone());
+    } else if let Some(ref lm) = validators.last_modified {
+      request = request.header("If-Unmodified-Since", lm.clone());
+    }
   }
   let resp = request.send().await.map_err(|e| e.to_string())?;
   let status = resp.status();
-  // If we requested resume but server returned 200, restart from 0
+  // If we requested resume but server returned 200 (or 412: file changed),
+  // restart from 0
   let effective_offset = if resume_offset > 0 && status == 206 {
     resume_offset
-  } else if resume_offset > 0 && status == 200 {
+  } else if resume_offset > 0 && (status == 200 || status == 412) {
     // truncate file and start over
     let _ = tokio::fs::OpenOptions::new()
       .write(true)
@@ -298,6 +496,29 @@ async fn download_single(
   if !resp.status().is_success() && resp.status() != 206 {
     return Err(format!("HTTP {} for {}", resp.status(), url));
   }
+  // Learn the total late: some servers omit length on HEAD/probe but send it
+  // on the real GET. 200 → Content-Length is the total; 206 → parse it out
+  // of Content-Range (content_length would only be the remainder there).
+  // Flips the UI from indeterminate to real % mid-download.
+  let mut total = total;
+  if total == 0 {
+    if status == 200 {
+      if let Some(len) = resp.content_length() {
+        total = len;
+      }
+    } else if status == 206 {
+      if let Some(cr) = resp.headers().get("content-range").and_then(|v| v.to_str().ok()) {
+        if let Some(slash) = cr.find('/') {
+          if let Ok(t) = cr[slash + 1..].parse::<u64>() {
+            total = t;
+          }
+        }
+      }
+    }
+  }
+  // Full GET responses often carry the content hashes — authoritative for
+  // the bytes we are about to receive.
+  extract_hashes(resp.headers(), &mut hashes);
   let mut file = if effective_offset > 0 {
     let mut f = tokio::fs::OpenOptions::new()
       .write(true)
@@ -331,7 +552,7 @@ async fn download_single(
     let chunk = chunk_res.map_err(|e| e.to_string())?;
     file.write_all(&chunk).await.map_err(|e| e.to_string())?;
     received += chunk.len() as u64;
-    if last_emit.elapsed().as_millis() >= 120 || chunk.len() > 64 * 1024 {
+    if last_emit.elapsed().as_millis() >= SINGLE_EMIT_MS || chunk.len() > SINGLE_EMIT_BYTES {
       last_emit = std::time::Instant::now();
       let _ = app.emit(
         "download-progress",
@@ -347,6 +568,10 @@ async fn download_single(
   }
   file.flush().await.map_err(|e| e.to_string())?;
   drop(file);
+  if let Err(e) = verify_file_hashes(dest.clone(), hashes).await {
+    emit_corrupt(&app, &id, &dest, e);
+    return Ok(());
+  }
   remove_control(&dest);
   let _ = app.emit(
     "download-finished",
@@ -371,19 +596,13 @@ async fn download_segmented(
   cancel: Arc<Mutex<bool>>,
   pause: Arc<Mutex<bool>>,
   total: u64,
-  etag: Option<String>,
+  validators: RequestValidators,
+  hashes: FileHashes,
+  max_conn: i32,
 ) -> Result<(), String> {
-  // Decide connections: IDM dynamic 8 default, aria2 -x16 max. Use 8 for >=5MB, else fewer
-  let max_conn = if total < 2 * 1024 * 1024 {
-    1
-  } else if total < 10 * 1024 * 1024 {
-    4
-  } else {
-    8
-  };
-  if max_conn == 1 {
+  if max_conn <= 1 {
     return download_single(
-      client, url, dest, filename, id, app, cancel, pause, 0, total,
+      client, url, dest, filename, id, app, cancel, pause, 0, total, validators, hashes,
     )
     .await;
   }
@@ -459,7 +678,7 @@ async fn download_segmented(
       filename: filename.clone(),
       total,
       segments: segments.clone(),
-      etag: etag.clone(),
+      etag: validators.etag.clone(),
     },
   );
 
@@ -470,11 +689,12 @@ async fn download_segmented(
   let control_dest = dest.clone();
   let control_url = url.clone();
   let control_filename = filename.clone();
-  let control_etag = etag.clone();
+  let control_etag = validators.etag.clone();
   let control_total = total;
+  let control_validators = validators.clone();
 
   let mut handles = Vec::new();
-  for idx in 0..max_conn {
+  for idx in 0..(max_conn as usize) {
     let client_c = client.clone();
     let url_c = url.clone();
     let dest_c = dest.clone();
@@ -489,11 +709,14 @@ async fn download_segmented(
     let c_url = control_url.clone();
     let c_filename = control_filename.clone();
     let c_etag = control_etag.clone();
+    let c_validators = control_validators.clone();
     let c_total = control_total;
     handles.push(tokio::spawn(async move {
       // Each worker picks its segment idx initially, but IDM work-stealing: if its segment done, steal largest
       let mut current_idx = idx;
-      loop {
+      // Segments already overlap-retried once (mismatch -> full re-fetch, twice -> job fails over to single).
+      let mut overlap_retried: Option<usize> = None;
+      'worker: loop {
         if *cancel_c.lock().unwrap() {
           return Ok::<(), String>(());
         }
@@ -514,7 +737,7 @@ async fn download_segmented(
               }
             }
             if let Some((bi, rem)) = best {
-              if rem < 256 * 1024 {
+              if rem < MIN_SPLIT_REMAINING {
                 return Ok(());
               }
               // split largest in half (IDM dynamic)
@@ -550,7 +773,7 @@ async fn download_segmented(
                 }
               }
               if let Some((bi, rem)) = best {
-                if rem < 256 * 1024 {
+                if rem < MIN_SPLIT_REMAINING {
                   return Ok(());
                 }
                 drop(segs);
@@ -585,65 +808,158 @@ async fn download_segmented(
           current_idx = usize::MAX;
           continue;
         }
-        let range = format!("bytes={}-{}", seg_start, end);
-        let mut req = client_c.get(&url_c).header("Range", range);
-        if let Some(ref et) = c_etag {
-          req = req.header("If-Match", et.clone());
-        }
-        let resp = match req.send().await {
-          Ok(r) => r,
-          Err(e) => return Err(e.to_string()),
-        };
-        if resp.status() != 206 {
-          return Err(format!("Range not supported during segmented download, got {}", resp.status()));
-        }
-        let mut stream = resp.bytes_stream();
-        let mut file = tokio::fs::OpenOptions::new()
-          .write(true)
-          .open(&dest_c)
-          .await
-          .map_err(|e| e.to_string())?;
-        file
-          .seek(SeekFrom::Start(seg_start))
-          .await
-          .map_err(|e| e.to_string())?;
-        let mut local_downloaded = already;
-        let mut last_save = std::time::Instant::now();
-        let mut last_emit = std::time::Instant::now();
-        while let Some(chunk_res) = stream.next().await {
+        // Fetch attempts for this segment assignment. Transient failures
+        // refetch the remainder (progress lives in shared state); deterministic
+        // failures (412/416/non-206) abort the job immediately.
+        let mut segment_done = false;
+        'attempt: for attempt in 1..=SEGMENT_ATTEMPTS {
           if *cancel_c.lock().unwrap() {
-            return Ok(());
+            return Ok::<(), String>(());
           }
           if *pause_c.lock().unwrap() {
-            return Ok(());
+            return Ok::<(), String>(());
           }
-          let chunk = chunk_res.map_err(|e| e.to_string())?;
-          file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-          local_downloaded += chunk.len() as u64;
-          {
-            let mut segs = segs_c.lock().unwrap();
+          // Refresh progress: a previous attempt may have written more.
+          let already_now: u64 = {
+            let segs = segs_c.lock().unwrap();
             if current_idx < segs.len() {
-              segs[current_idx].downloaded = local_downloaded;
+              segs[current_idx].downloaded
+            } else {
+              already
             }
+          };
+          let seg_start_now = start + already_now;
+          if seg_start_now > end {
+            segment_done = true;
+            break 'attempt;
           }
-          let mut tot = received_c.lock().unwrap();
-          *tot += chunk.len() as u64;
-          let tot_val = *tot;
-          drop(tot);
-          if last_emit.elapsed().as_millis() >= 150 {
-            last_emit = std::time::Instant::now();
-            let _ = app_c.emit(
-              "download-progress",
-              DownloadProgressPayload {
-                id: id_c.clone(),
-                filename: filename_c.clone(),
-                url: url_c.clone(),
-                received: tot_val,
-                total: c_total,
-              },
-            );
+          // IDM overlap guard: when resuming mid-segment, re-fetch the trailing
+          // OVERLAP_BYTES and compare with disk before trusting them.
+          let mut fetch_start = seg_start_now;
+          let mut overlap_expected: Option<Vec<u8>> = None;
+          if already_now > 0 {
+            let overlap = OVERLAP_BYTES.min(already_now);
+            let check_start = seg_start_now - overlap;
+            let mut probe = tokio::fs::File::open(&dest_c).await.map_err(|e| e.to_string())?;
+            probe.seek(SeekFrom::Start(check_start)).await.map_err(|e| e.to_string())?;
+            let mut expected = vec![0u8; overlap as usize];
+            probe.read_exact(&mut expected).await.map_err(|e| e.to_string())?;
+            drop(probe);
+            fetch_start = check_start;
+            overlap_expected = Some(expected);
           }
-          if last_save.elapsed().as_millis() >= 800 {
+          let range = format!("bytes={}-{}", fetch_start, end);
+          let mut req = client_c.get(&url_c).header("Range", range);
+          if let Some(ref et) = c_validators.etag {
+            req = req.header("If-Match", et.clone());
+          } else if let Some(ref lm) = c_validators.last_modified {
+            req = req.header("If-Unmodified-Since", lm.clone());
+          }
+          let resp = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+              if attempt < SEGMENT_ATTEMPTS && retry_backoff(attempt, &cancel_c, &pause_c).await {
+                continue 'attempt;
+              }
+              return Err(e.to_string());
+            }
+          };
+          let status = resp.status();
+          if status == 412 {
+            return Err(ERR_SOURCE_CHANGED.to_string());
+          }
+          if status == 416 {
+            return Err(ERR_RANGE_UNSATISFIABLE.to_string());
+          }
+          if status != 206 {
+            if (status == 429 || status.is_server_error())
+              && attempt < SEGMENT_ATTEMPTS
+              && retry_backoff(attempt, &cancel_c, &pause_c).await
+            {
+              continue 'attempt;
+            }
+            return Err(format!("Range not supported during segmented download, got {status}"));
+          }
+          let mut stream = resp.bytes_stream();
+          let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .open(&dest_c)
+            .await
+            .map_err(|e| e.to_string())?;
+          file
+            .seek(SeekFrom::Start(seg_start_now))
+            .await
+            .map_err(|e| e.to_string())?;
+          let mut local_downloaded = already_now;
+          let mut overlap_skip = overlap_expected.as_ref().map(|v| v.len()).unwrap_or(0);
+          let mut overlap_consumed = 0usize;
+          let mut overlap_ok = true;
+          let mut last_save = std::time::Instant::now();
+          let mut last_emit = std::time::Instant::now();
+          while let Some(chunk_res) = stream.next().await {
+            if *cancel_c.lock().unwrap() {
+              return Ok(());
+            }
+            if *pause_c.lock().unwrap() {
+              return Ok(());
+            }
+            let chunk = match chunk_res {
+              Ok(c) => c,
+              Err(e) => {
+                persist_segment_progress(&segs_c, current_idx, local_downloaded);
+                if attempt < SEGMENT_ATTEMPTS && retry_backoff(attempt, &cancel_c, &pause_c).await {
+                  continue 'attempt;
+                }
+                return Err(e.to_string());
+              }
+            };
+            // Verify overlap bytes against disk; never write them (assumed identical).
+            let mut writable = &chunk[..];
+            if overlap_skip > 0 {
+              let take = std::cmp::min(overlap_skip, chunk.len());
+              if let Some(ref expected) = overlap_expected {
+                if overlap_ok && chunk[..take] != expected[overlap_consumed..overlap_consumed + take] {
+                  overlap_ok = false;
+                }
+              }
+              overlap_consumed += take;
+              overlap_skip -= take;
+              writable = &chunk[take..];
+              if writable.is_empty() {
+                continue;
+              }
+            }
+            if !overlap_ok {
+              // Stored bytes diverge from the server: re-fetch this segment once.
+              if overlap_retried == Some(current_idx) {
+                return Err(ERR_OVERLAP_MISMATCH.to_string());
+              }
+              persist_segment_progress(&segs_c, current_idx, 0);
+              overlap_retried = Some(current_idx);
+              current_idx = usize::MAX;
+              continue 'worker;
+            }
+            file.write_all(writable).await.map_err(|e| e.to_string())?;
+            local_downloaded += writable.len() as u64;
+            persist_segment_progress(&segs_c, current_idx, local_downloaded);
+            let mut tot = received_c.lock().unwrap();
+            *tot += writable.len() as u64;
+            let tot_val = *tot;
+            drop(tot);
+            if last_emit.elapsed().as_millis() >= PROGRESS_EMIT_MS {
+              last_emit = std::time::Instant::now();
+              let _ = app_c.emit(
+                "download-progress",
+                DownloadProgressPayload {
+                  id: id_c.clone(),
+                  filename: filename_c.clone(),
+                  url: url_c.clone(),
+                  received: tot_val,
+                  total: c_total,
+                },
+              );
+            }
+          if last_save.elapsed().as_millis() >= CONTROL_SAVE_MS {
             last_save = std::time::Instant::now();
             let segs_clone = segs_c.lock().unwrap().clone();
             save_control(
@@ -652,14 +968,30 @@ async fn download_segmented(
                 url: c_url.clone(),
                 filename: c_filename.clone(),
                 total: c_total,
-                segments: segs_clone,
+                segments: segs_clone.clone(),
                 etag: c_etag.clone(),
               },
             );
+            // Throttled per-segment telemetry for tuning (slow-tail visibility).
+            let _ = app_c.emit(
+              "download-segments",
+              serde_json::json!({ "id": id_c, "segments": segs_clone }),
+            );
           }
-          if local_downloaded >= (end - start + 1) {
-            break;
+            if local_downloaded >= (end - start + 1) {
+              segment_done = true;
+              break;
+            }
           }
+          if segment_done {
+            break 'attempt;
+          }
+          // Server closed the stream early: refetch the remainder if attempts remain.
+          persist_segment_progress(&segs_c, current_idx, local_downloaded);
+          if attempt < SEGMENT_ATTEMPTS && retry_backoff(attempt, &cancel_c, &pause_c).await {
+            continue 'attempt;
+          }
+          return Err("Segment truncated by server".to_string());
         }
         // segment done, try steal next
         current_idx = usize::MAX;
@@ -695,7 +1027,7 @@ async fn download_segmented(
             filename: filename.clone(),
             total,
             segments: segs_clone,
-            etag: etag.clone(),
+            etag: control_etag.clone(),
           },
         );
         let _ = app.emit("download-paused", serde_json::json!({ "id": id }));
@@ -714,7 +1046,7 @@ async fn download_segmented(
           filename: filename.clone(),
           total,
           segments: segs_clone,
-          etag: etag.clone(),
+          etag: control_etag.clone(),
         },
       );
       let _ = app.emit("download-paused", serde_json::json!({ "id": id }));
@@ -723,12 +1055,19 @@ async fn download_segmented(
   }
 
   if let Some(err) = first_err {
-    // fallback to single if range not supported
-    if err.contains("Range not supported") {
+    // Fallback to single-stream from scratch when ranges are refused, the
+    // origin file changed mid-download (412/416), or resumed bytes repeatedly
+    // fail overlap verification. The partial file is untrustworthy: drop it.
+    if err.contains("Range not supported")
+      || err.contains("(412")
+      || err.contains("(416")
+      || err.contains(ERR_OVERLAP_MISMATCH)
+    {
       let _ = tokio::fs::remove_file(&dest).await;
       remove_control(&dest);
       return download_single(
         client, url, dest, filename, id, app, cancel, pause, 0, total,
+        validators, hashes,
       )
       .await;
     }
@@ -743,6 +1082,11 @@ async fn download_segmented(
         return Err("Segment incomplete".to_string());
       }
     }
+  }
+
+  if let Err(e) = verify_file_hashes(dest.clone(), hashes).await {
+    emit_corrupt(&app, &id, &dest, e);
+    return Ok(());
   }
 
   let total_received = *total_received.lock().unwrap();
@@ -766,6 +1110,8 @@ pub async fn start_download(
   state: tauri::State<'_, DownloadState>,
   id: String,
   url: String,
+  max_connections: Option<i32>,
+  resume: Option<bool>,
 ) -> Result<String, String> {
   let filename = filename_from_url(&url);
   let dir = download_dir(&app);
@@ -779,6 +1125,10 @@ pub async fn start_download(
 
   let dest = if let Some(d) = existing_dest {
     d
+  } else if resume.unwrap_or(false) {
+    // Restart resume (e.g. auto-resume after app restart): the user already
+    // chose this path once, so reuse it silently instead of prompting again.
+    dir.join(&filename)
   } else {
     let dest = resolve_destination(&dir, &filename)?;
     // Register job
@@ -851,7 +1201,12 @@ pub async fn start_download(
         .build()
         .map_err(|e| e.to_string())?;
 
-      let (total_opt, accept_ranges, etag, cd_filename) = probe_file(&client, &url_for_task).await;
+      let probe = probe_file(&client, &url_for_task).await;
+      let total_opt = probe.total;
+      let accept_ranges = probe.accept_ranges;
+      let validators = probe.validators;
+      let cd_filename = probe.cd_filename;
+      let hashes = probe.hashes;
       let mut final_filename = filename_for_task.clone();
       let mut final_dest = dest_for_task.clone();
       if let Some(refined) = cd_filename {
@@ -903,17 +1258,11 @@ pub async fn start_download(
         0
       };
 
-      // If control file exists and segmented, go segmented path
-      let _use_segmented = total > 0
-        && accept_ranges
-        && total >= 1024 * 1024
-        && load_control(&final_dest).is_some()
-          || (total >= 2 * 1024 * 1024 && accept_ranges);
+      // Single source of truth: 1 connection means single-stream.
+      // The frontend passes the user setting + per-host override (default 8).
+      let max_conn = connection_plan(total, accept_ranges, max_connections.unwrap_or(8));
 
-      // Actually decide: if total >= 1MB and accept_ranges, use segmented
-      let should_segment = total >= 1024 * 1024 && accept_ranges && total > 0;
-
-      if should_segment {
+      if max_conn > 1 {
         // Check if we have a partial single file that would conflict with segmented sparse file
         // If resume_offset >0 but no control, fallback to single resume to avoid corruption
         if resume_offset > 0 && load_control(&final_dest).is_none() && resume_offset < total {
@@ -929,6 +1278,8 @@ pub async fn start_download(
             pause,
             resume_offset,
             total,
+            validators,
+            hashes,
           )
           .await;
         }
@@ -942,7 +1293,9 @@ pub async fn start_download(
           cancel,
           pause,
           total,
-          etag,
+          validators,
+          hashes,
+          max_conn,
         )
         .await
       } else {
@@ -957,6 +1310,8 @@ pub async fn start_download(
           pause,
           resume_offset,
           total,
+          validators,
+          hashes,
         )
         .await
       }
@@ -1021,3 +1376,50 @@ pub fn resume_download(state: tauri::State<'_, DownloadState>, id: String) -> Re
 pub fn get_download_dir(app: AppHandle) -> Result<String, String> {
   Ok(download_dir(&app).to_string_lossy().to_string())
 }
+
+#[cfg(test)]
+mod plan_tests {
+  use super::*;
+
+  #[test]
+  fn connection_tiers() {
+    assert_eq!(connection_plan(0, true, 8), 1);
+    assert_eq!(connection_plan(500_000, true, 8), 1);
+    assert_eq!(connection_plan(1_500_000, true, 8), 1);
+    assert_eq!(connection_plan(5_000_000, true, 8), 4);
+    assert_eq!(connection_plan(50_000_000, true, 8), 8);
+    assert_eq!(connection_plan(50_000_000, false, 8), 1);
+    assert_eq!(connection_plan(0, false, 8), 1);
+    // User/host ceiling clamps the tier but never forces segmentation.
+    assert_eq!(connection_plan(50_000_000, true, 2), 2);
+    assert_eq!(connection_plan(50_000_000, true, 1), 1);
+    assert_eq!(connection_plan(50_000_000, true, 32), 8);
+    assert_eq!(connection_plan(50_000_000, true, 0), 1);
+    assert_eq!(connection_plan(500_000, true, 16), 1);
+  }
+
+  #[test]
+  fn hash_header_parsing() {
+    // Wrong lengths are rejected.
+    let (m, s) = parse_kv_hashes("sha-256=AAAA, md5=BBBB");
+    assert!(m.is_none() && s.is_none());
+    // Exact lengths accepted (16 zero bytes / 32 zero bytes).
+    let (m, s) = parse_kv_hashes("SHA-256=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=, MD5=AAAAAAAAAAAAAAAAAAAAAA==");
+    assert_eq!(m, Some(vec![0u8; 16]));
+    assert_eq!(s, Some(vec![0u8; 32]));
+    // Content-MD5 of empty string.
+    let empty_md5 = decode_b64_hash("1B2M2Y8AsgTpgAmY7PhCfg==", 16).unwrap();
+    assert_eq!(empty_md5, vec![0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e]);
+    // Known-answer digests of "abc".
+    let got_md5 = <md5::Md5 as md5::Digest>::digest(b"abc");
+    assert_eq!(format!("{got_md5:x}"), "900150983cd24fb0d6963f7d28e17f72");
+    let got_sha = <sha2::Sha256 as sha2::Digest>::digest(b"abc");
+    assert_eq!(format!("{got_sha:x}"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    // x-goog-hash style: crc32c ignored, md5 picked up.
+    let (m2, s2) = parse_kv_hashes("crc32c=DUoZ3g==, md5=1B2M2Y8AsgTpgAmY7PhCfg==");
+    assert_eq!(m2, Some(empty_md5));
+    assert!(s2.is_none());
+  }
+}
+
+

@@ -251,7 +251,7 @@ export function DevConsoleScreen() {
               <small className="metric-sub-detail">Aegis.db</small>
             </div>
             <span className="metric-desc">
-              {stats.lastDbError ? `Error: ${stats.lastDbError.slice(0, 45)}...` : "tauri-plugin-sql connection active"}
+              {stats.lastDbError ? `Error: ${stats.lastDbError.slice(0, 45)}...` : "SQLCipher connection active"}
             </span>
           </div>
         </div>

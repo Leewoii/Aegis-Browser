@@ -70,7 +70,6 @@ import {
   saveNetflixSettings,
   DEFAULT_NETFLIX_SETTINGS,
   type NetflixExtensionSettings,
-  encryptDbAtRest,
   closeDatabase,
   setDatabasePassword,
 } from "./services/storage";
@@ -558,7 +557,22 @@ export default function App() {
       // #endregion DEBUG
       storageLoadedRef.current = true;
     }
-    void load();
+    void load().catch((error: unknown) => {
+      // Init/load must never die silently: without storageLoaded, no
+      // in-session saves ever fire and the session silently stops persisting.
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("Failed to initialize storage:", error);
+      void debugLog(`[DEBUG H1] load FAILED: ${msg}`);
+      devConsole.persistence({
+        entity: "session",
+        state: "db_failed",
+        stage: "reload_refetch",
+        action: "APP_STARTUP_LOAD",
+        description: `Storage init failed — session will not persist: ${msg}`,
+        error: error as Error,
+      });
+      showToast(`Storage failed: ${msg}`, "error");
+    });
     return () => {
       cancelled = true;
     };
@@ -696,18 +710,15 @@ export default function App() {
           });
         }
 
-        // Close SQLite before removing its plaintext file from disk.
+        // Close SQLite (checkpointed). The file is SQLCipher-encrypted at all
+        // times, so there is no plaintext to remove or mirror to update.
         try {
           await closeDatabase();
-          const encrypted = await encryptDbAtRest(true);
-          if (!encrypted) {
-            throw new Error("Database encryption did not complete");
-          }
         } catch (error) {
           isClosingRef.current = false;
-          await debugLog(`[DEBUG H1] database protection failed: ${error instanceof Error ? error.message : String(error)}`);
-          console.error("Failed to protect database before close:", error);
-          devConsole.system("Database Protection Failed", String(error), { error });
+          await debugLog(`[DEBUG H1] database close failed: ${error instanceof Error ? error.message : String(error)}`);
+          console.error("Failed to close database before close:", error);
+          devConsole.system("Database Close Failed", String(error), { error });
           return;
         }
 

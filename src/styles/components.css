@@ -1867,6 +1867,47 @@
   background: #28c840;
 }
 
+/* Indeterminate busy bar for unknown-size downloads */
+.download-bar-fill.indeterminate {
+  width: 40%;
+  animation: download-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes download-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+/* IDM-style per-connection segment strip */
+.download-segments {
+  display: flex;
+  height: 5px;
+  margin: 2px 0 6px;
+  background: var(--border-subtle);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.download-seg {
+  position: relative;
+  height: 100%;
+  border-left: 1px solid #f472b6;
+}
+
+.download-seg:first-child {
+  border-left: none;
+}
+
+.download-seg-fill {
+  height: 100%;
+  background: var(--accent-gradient);
+  transition: width var(--speed-med) var(--ease-out);
+}
+
 .download-status {
   font-size: 11.5px;
   color: var(--text-muted);

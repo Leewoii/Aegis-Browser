@@ -23,7 +23,6 @@ import {
   retrieveSecureSecret,
   storeSecureSecret,
   getDbEncryptionStatus,
-  encryptDbAtRest,
 } from "../services/storage";
 import { devConsole } from "../services/devConsole";
 
@@ -131,7 +130,7 @@ export function SettingsScreen({
     };
   }, []);
 
-  // DB at-rest encryption status (Aegis.db is plain SQLite — readable with any DB viewer)
+  // DB encryption status (Aegis.db is SQLCipher-encrypted at all times)
   useEffect(() => {
     if (section !== "privacy") return;
     let active = true;
@@ -140,7 +139,7 @@ export function SettingsScreen({
         const s = await getDbEncryptionStatus();
         if (active) setEncStatus(s);
       } catch {
-        if (active) setEncStatus("plain:true enc:false (unavailable)");
+        if (active) setEncStatus("store:unknown");
       }
     })();
     return () => {
@@ -151,13 +150,13 @@ export function SettingsScreen({
   const handleEncryptNow = async () => {
     setEncrypting(true);
     try {
-      const ok = await encryptDbAtRest(false);
+      // No-op by design: the file is always ciphertext. Refresh the status.
       const s = await getDbEncryptionStatus();
       setEncStatus(s);
-      devConsole.settings("info", "DB Encrypt", ok ? `DB at-rest encrypted (mirror updated): ${s}` : `Encrypt skipped: ${s}`, { status: s });
+      devConsole.settings("info", "DB Encryption Status", `Always-encrypted store: ${s}`, { status: s });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      devConsole.settings("error", "DB Encrypt Failed", msg, { error: err });
+      devConsole.settings("error", "DB Status Failed", msg, { error: err });
     } finally {
       setEncrypting(false);
     }
@@ -333,6 +332,23 @@ export function SettingsScreen({
 
                 <div className="settings-field">
                   <div className="settings-field-text">
+                    <label>Download connections</label>
+                    <p>Parallel connections per file (fewer for strict servers)</p>
+                  </div>
+                  <select
+                    value={settings.maxDownloadConnections ?? 8}
+                    onChange={(e) => onChange({ maxDownloadConnections: parseInt(e.target.value, 10) })}
+                  >
+                    <option value={1}>1 (single)</option>
+                    <option value={2}>2</option>
+                    <option value={4}>4</option>
+                    <option value={8}>8</option>
+                    <option value={16}>16</option>
+                  </select>
+                </div>
+
+                <div className="settings-field">
+                  <div className="settings-field-text">
                     <label htmlFor="ad-block-toggle">Block ads & trackers</label>
                     <p>Built-in shield for supported pages</p>
                   </div>
@@ -439,30 +455,29 @@ export function SettingsScreen({
                     <Lock size={14} />
                   </div>
                   <div className="settings-row-text">
-                    <strong>Database at-rest encryption</strong>
+                    <strong>Database encryption</strong>
                     <span style={{ wordBreak: "break-all" }}>
                       <code className="settings-inline-code" style={{ fontSize: 11 }}>{encStatus}</code>
                       <br />
                       <span style={{ fontSize: 11, opacity: 0.85 }}>
-                        <b>Aegis.db</b> is plain SQLite — any viewer can read `tabs`, `history`, `downloads`.{" "}
-                        Credentials/`secure_vault` are already DPAPI-encrypted, but now the whole DB is mirrored as{" "}
-                        <b>Aegis.db.enc</b> (DPAPI `CryptProtectData`) on every close. Plain remains while running for SQLite, encrypted mirror protects offline copies.
+                        <b>Aegis.db</b> is SQLCipher-encrypted (AES-256, per-page HMAC) — file, WAL and journals are{" "}
+                        ciphertext at all times, keyed by your unlock password. No plaintext step on startup or shutdown.
                       </span>
                     </span>
                   </div>
-                  <button className="settings-btn" onClick={handleEncryptNow} disabled={encrypting} title="Mirror current DB to encrypted file now">
+                  <button className="settings-btn" onClick={handleEncryptNow} disabled={encrypting} title="Refresh encryption status">
                     {encrypting ? <Loader2 size={13} className="spin" /> : <Shield size={13} />}
-                    {encrypting ? "Encrypting…" : "Encrypt now"}
+                    {encrypting ? "Checking…" : "Refresh"}
                   </button>
                 </div>
                 <div className="settings-row" style={{ opacity: 0.9 }}>
-                  <div className="settings-row-icon" style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}>
+                  <div className="settings-row-icon" style={{ background: "rgba(52,211,153,0.12)", color: "#34d399" }}>
                     <Shield size={14} />
                   </div>
                   <div className="settings-row-text">
-                    <strong>How to make it unreadable</strong>
+                    <strong>Always encrypted</strong>
                     <span>
-                      Full cold protection needs <b>SQLCipher</b> (`PRAGMA key` per-page encryption) or OS full-disk. Current file-level DPAPI is “at-rest mirror” — best without migrating to SQLCipher. For true unreadability: enable SQLCipher (rekey existing DB, store key in DPAPI vault) or move `Aegis.db` to BitLocker/encrypted volume.
+                      There is no “encrypt now” step anymore: every byte is written encrypted. Wrong password cannot open the store, and forgetting the password means the data is unrecoverable by design.
                     </span>
                   </div>
                 </div>

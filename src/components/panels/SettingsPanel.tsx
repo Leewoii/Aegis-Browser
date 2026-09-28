@@ -223,6 +223,20 @@ export function SettingsPanel({
               />
             </div>
 
+            <div className="settings-option">
+              <label>Download Connections</label>
+              <select
+                value={settings.maxDownloadConnections ?? 8}
+                onChange={(e) => onChange({ maxDownloadConnections: parseInt(e.target.value, 10) })}
+              >
+                <option value={1}>1 (single)</option>
+                <option value={2}>2</option>
+                <option value={4}>4</option>
+                <option value={8}>8</option>
+                <option value={16}>16</option>
+              </select>
+            </div>
+
             <div className="settings-toggle-row">
               <div>
                 <label htmlFor="ad-block-toggle">Ad & Tracker Shield</label>

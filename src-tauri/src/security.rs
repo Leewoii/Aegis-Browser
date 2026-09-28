@@ -11,7 +11,7 @@ pub struct SecureSecretPayload {
 }
 
 #[cfg(target_os = "windows")]
-mod win_dpapi {
+pub(crate) mod win_dpapi {
   use std::ptr::null_mut;
 
   #[repr(C)]
@@ -149,7 +149,7 @@ mod win_dpapi {
 }
 
 #[cfg(not(target_os = "windows"))]
-mod win_dpapi {
+pub(crate) mod win_dpapi {
   pub fn protect(data: &[u8]) -> Result<Vec<u8>, String> {
     Ok(data.iter().map(|b| b ^ 0x5A).collect())
   }
@@ -198,58 +198,28 @@ pub fn decrypt_db(app: tauri::AppHandle, password: String) -> Result<bool, Strin
   if !enc_path.exists() {
     return Ok(false);
   }
-  // If plaintext already exists and is newer than enc, keep it (avoid overwriting newer data)
-  // Prefer enc if it exists — it is the at-rest representation
+  // Never overwrite an existing non-empty plaintext database: it can hold
+  // committed data (including un-checkpointed WAL frames) newer than the enc
+  // mirror, e.g. after an unclean shutdown or a concurrent second instance.
+  // The enc mirror is only ever written FROM plaintext, so it can never be
+  // newer data. SQLite recovers WAL frames on open by itself.
+  // (Graceful shutdowns remove the plaintext file, so the decrypt path below
+  // still runs exactly when it should.)
+  if db_path.exists() {
+    if let Ok(meta) = std::fs::metadata(&db_path) {
+      if meta.len() > 0 {
+        return Ok(false);
+      }
+    }
+  }
+  // Plaintext is missing (normal graceful-shutdown state) or empty:
+  // restore it from the at-rest mirror.
   let enc_bytes = std::fs::read(&enc_path).map_err(|e| e.to_string())?;
   // Older Aegis versions used DPAPI without password entropy. Accept that format
   // once so existing profiles can migrate on the next protected shutdown.
   let plain = win_dpapi::unprotect_with_entropy(&enc_bytes, password.as_bytes())
     .or_else(|_| win_dpapi::unprotect(&enc_bytes))?;
   std::fs::write(&db_path, plain).map_err(|e| e.to_string())?;
-  Ok(true)
-}
-
-/// Encrypt Aegis.db -> Aegis.db.enc and remove plaintext (or keep if keep_plain). Returns true if encrypted.
-#[tauri::command]
-pub fn encrypt_db(app: tauri::AppHandle, password: String) -> Result<bool, String> {
-  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-  let db_path = dir.join("Aegis.db");
-  let enc_path = dir.join("Aegis.db.enc");
-  if !db_path.exists() {
-    return Ok(false);
-  }
-  let plain = std::fs::read(&db_path).map_err(|e| e.to_string())?;
-  let enc = win_dpapi::protect_with_entropy(&plain, password.as_bytes())?;
-  // atomic write
-  let tmp = dir.join("Aegis.db.enc.tmp");
-  std::fs::write(&tmp, &enc).map_err(|e| e.to_string())?;
-  if enc_path.exists() {
-    std::fs::remove_file(&enc_path).map_err(|e| e.to_string())?;
-  }
-  std::fs::rename(&tmp, &enc_path).map_err(|e| e.to_string())?;
-  // Do NOT delete plaintext while app is running — SQLite needs it. Caller should invoke on close after DB closed.
-  // For at-rest protection we keep enc as mirror; on next launch decrypt will overwrite.
-  Ok(true)
-}
-
-/// Encrypt and remove plaintext — for shutdown path after DB closed.
-#[tauri::command]
-pub fn encrypt_db_and_remove_plain(app: tauri::AppHandle, password: String) -> Result<bool, String> {
-  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-  let db_path = dir.join("Aegis.db");
-  let enc_path = dir.join("Aegis.db.enc");
-  if !db_path.exists() {
-    return Ok(false);
-  }
-  let plain = std::fs::read(&db_path).map_err(|e| e.to_string())?;
-  let enc = win_dpapi::protect_with_entropy(&plain, password.as_bytes())?;
-  let tmp_path = dir.join("Aegis.db.enc.tmp");
-  std::fs::write(&tmp_path, enc).map_err(|e| e.to_string())?;
-  if enc_path.exists() {
-    std::fs::remove_file(&enc_path).map_err(|e| e.to_string())?;
-  }
-  std::fs::rename(&tmp_path, &enc_path).map_err(|e| e.to_string())?;
-  std::fs::remove_file(&db_path).map_err(|e| format!("Remove plaintext database: {}", e))?;
   Ok(true)
 }
 
@@ -321,20 +291,4 @@ pub fn verify_profile(app: tauri::AppHandle, password: String) -> Result<String,
     .verify_password(password.as_bytes(), &parsed)
     .map_err(|_| "Incorrect password".to_string())?;
   Ok(profile.username)
-}
-
-/// Returns whether DB file on disk is currently encrypted (enc exists) or plaintext readable.
-#[tauri::command]
-pub fn db_encryption_status(app: tauri::AppHandle) -> Result<String, String> {
-  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-  let db_path = dir.join("Aegis.db");
-  let enc_path = dir.join("Aegis.db.enc");
-  let has_plain = db_path.exists();
-  let has_enc = enc_path.exists();
-  Ok(format!(
-    "plain:{} enc:{} dir:{}",
-    has_plain,
-    has_enc,
-    dir.to_string_lossy()
-  ))
 }

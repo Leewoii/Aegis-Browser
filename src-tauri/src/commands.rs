@@ -1,11 +1,10 @@
 use tauri::{AppHandle, Manager, Runtime, State};
-use std::fs::{create_dir_all, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::Write;
 
 use crate::navigation::NavigationState;
 
 const ALLOWED_SCHEMES: [&str; 4] = ["http://", "https://", "file://", "data:"];
-const DEBUG_LOG_PATH: &str = r"D:\Users\Frost\Documents\Portfolio\SilentX_V2\.claude\debug.log";
 
 /// Whitelist a URL for a given webview label before the frontend triggers it.
 #[tauri::command]
@@ -123,18 +122,67 @@ pub fn clear_profile_data<R: Runtime>(
   Ok(())
 }
 
+/// Persistent diagnostics sink (release-safe).
+/// Only counts/ids/timestamps may be logged by callers — and as a second
+/// line of defense any URL-looking substring is redacted here, since some
+/// legacy call sites interpolate request URLs. Rotated at 512 KiB.
 #[tauri::command]
-pub fn debug_log(message: String) -> Result<(), String> {
-  if let Some(parent) = std::path::Path::new(DEBUG_LOG_PATH).parent() {
-    create_dir_all(parent).map_err(|e| e.to_string())?;
+pub fn debug_log(app: AppHandle, message: String) -> Result<(), String> {
+  let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+  let log_path = dir.join("aegis-diagnostics.log");
+  if let Ok(meta) = std::fs::metadata(&log_path) {
+    if meta.len() > 512 * 1024 {
+      let _ = std::fs::remove_file(dir.join("aegis-diagnostics.log.old"));
+      let _ = std::fs::rename(&log_path, dir.join("aegis-diagnostics.log.old"));
+    }
   }
 
+  let safe = redact_urls(&message);
   let mut file = OpenOptions::new()
     .create(true)
     .append(true)
-    .open(DEBUG_LOG_PATH)
+    .open(&log_path)
     .map_err(|e| e.to_string())?;
 
-  writeln!(file, "{}", message).map_err(|e| e.to_string())?;
+  writeln!(file, "{}", safe).map_err(|e| e.to_string())?;
   Ok(())
+}
+
+fn redact_urls(message: &str) -> String {
+  let bytes = message.as_bytes();
+  let mut out = String::with_capacity(message.len());
+  let mut i = 0;
+  while i < bytes.len() {
+    let rest = &message[i..];
+    let marker = if rest.starts_with("https://") {
+      Some(8)
+    } else if rest.starts_with("http://") {
+      Some(7)
+    } else if rest.starts_with("url=") {
+      Some(4)
+    } else {
+      None
+    };
+    if let Some(prefix) = marker {
+      out.push_str(&message[i..i + prefix]);
+      out.push_str("[redacted]");
+      i += prefix;
+      while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ')' | ']' | '}') {
+          break;
+        }
+        i += 1;
+      }
+    } else {
+      // Advance by one UTF-8 char boundary.
+      let mut len = 1;
+      while !message.is_char_boundary(i + len) {
+        len += 1;
+      }
+      out.push_str(&message[i..i + len]);
+      i += len;
+    }
+  }
+  out
 }

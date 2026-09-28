@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS: Settings = {
   startupBehavior: "previous",
   defaultDownloadsPath: "Downloads",
   adBlockingEnabled: false,
+  maxDownloadConnections: 8,
 };
 
 export const GROUP_COLORS = [

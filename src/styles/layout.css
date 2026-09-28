@@ -598,8 +598,11 @@ html.aegis-video-fullscreen #root {
 }
 
 .tab-title {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
 }
 

@@ -40,6 +40,7 @@ function filenameFromUrl(url: string): string {
 class DownloadManager {
   private activeTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
   private speedTracking: Map<string, { time: number; bytes: number }> = new Map();
+  private segmentSnapshots: Map<string, Array<{ start: number; end: number; downloaded: number }>> = new Map();
   private listeners: Set<DownloadListener> = new Set();
   private downloads: DownloadEntry[] = [];
   private tauriListenersReady = false;
@@ -66,6 +67,10 @@ class DownloadManager {
 
   public getDownloads(): DownloadEntry[] {
     return [...this.downloads];
+  }
+
+  public getSegments(id: string): Array<{ start: number; end: number; downloaded: number }> {
+    return this.segmentSnapshots.get(id) ?? [];
   }
 
   private ensureTauriListeners() {
@@ -107,6 +112,15 @@ class DownloadManager {
         const { id, total, path: dest } = e.payload;
         const target = this.downloads.find((d) => d.id === id);
         if (!target) return;
+        const segs = this.segmentSnapshots.get(id) ?? [];
+        if (segs.length > 1) {
+          const pct = segs.map((s) => {
+            const len = Math.max(1, s.end - s.start + 1);
+            return Math.round((Math.min(s.downloaded, len) / len) * 100);
+          });
+          devConsole.frontend("info", "Download Segments", `${segs.length} segments finished [${pct.join(", ")}%]`, { id, segments: segs.length });
+        }
+        this.segmentSnapshots.delete(id);
         target.receivedBytes = total;
         target.totalBytes = total;
         target.state = "completed";
@@ -131,10 +145,33 @@ class DownloadManager {
       target.completed = false;
       target.speed = 0;
       this.speedTracking.delete(id);
+      this.segmentSnapshots.delete(id);
       this.notify();
       void upsertDownload({ ...target });
       this.dequeueAndStartNext();
     });
+    void listen<{ id: string; error: string }>("download-corrupt", (e) => {
+      const { id, error } = e.payload;
+      const target = this.downloads.find((d) => d.id === id);
+      if (!target) return;
+      console.error("Download failed integrity check", id, error);
+      devConsole.frontend("error", "Download Corrupt", `${error} — file deleted, retry the download`, { id, url: target.url, filename: target.filename, error });
+      target.state = "failed";
+      target.completed = false;
+      target.receivedBytes = 0;
+      target.speed = 0;
+      this.speedTracking.delete(id);
+      this.segmentSnapshots.delete(id);
+      this.notify();
+      void upsertDownload({ ...target });
+      this.dequeueAndStartNext();
+    });
+    void listen<{ id: string; segments: Array<{ start: number; end: number; downloaded: number }> }>(
+      "download-segments",
+      (e) => {
+        this.segmentSnapshots.set(e.payload.id, e.payload.segments);
+      },
+    );
     void listen<{ id: string }>("download-cancelled", (e) => {
       const { id } = e.payload;
       const target = this.downloads.find((d) => d.id === id);
@@ -142,6 +179,7 @@ class DownloadManager {
       target.state = "cancelled";
       target.speed = 0;
       this.speedTracking.delete(id);
+      this.segmentSnapshots.delete(id);
       this.notify();
       void upsertDownload({ ...target });
       this.dequeueAndStartNext();
@@ -160,6 +198,28 @@ class DownloadManager {
 
   private maxConcurrent = 3;
   private pendingQueue: string[] = [];
+
+  /** Global setting clamped with any per-host politeness override. */
+  private async effectiveMaxConnections(url: string): Promise<number> {
+    try {
+      const { loadSettings, loadHostConnectionLimit } = await import("./storage");
+      const settings = await loadSettings();
+      const base = Math.min(16, Math.max(1, Math.floor(settings.maxDownloadConnections ?? 8)));
+      let host = "";
+      try {
+        host = new URL(url).hostname.toLowerCase();
+      } catch {
+        host = "";
+      }
+      if (host) {
+        const override = await loadHostConnectionLimit(host);
+        if (override !== null) return override;
+      }
+      return base;
+    } catch {
+      return 8;
+    }
+  }
 
   private canStartImmediately(): boolean {
     const active = this.downloads.filter((d) => d.state === "in_progress").length;
@@ -212,10 +272,14 @@ class DownloadManager {
       // Real download via Rust — segmented engine (IDM dynamic + aria2 pieces)
       // If this is a resume of a paused segmented download, invoke resume_download first
       const invokeResume = wasPaused && target.receivedBytes > 0 && target.receivedBytes < target.totalBytes;
-      const startPromise = invokeResume
-        ? invoke<string>("resume_download", { id: target.id })
-            .then(() => invoke<string>("start_download", { id: target.id, url: target.url }))
-        : invoke<string>("start_download", { id: target.id, url: target.url });
+      const startPromise = (async () => {
+        const maxConnections = await this.effectiveMaxConnections(target.url);
+        const args = { id: target.id, url: target.url, maxConnections, resume: wasPaused };
+        if (invokeResume) {
+          await invoke<string>("resume_download", { id: target.id });
+        }
+        return invoke<string>("start_download", args);
+      })();
       startPromise
         .then((dest) => {
           target.destination = dest;
@@ -424,3 +488,4 @@ class DownloadManager {
 }
 
 export const downloadManager = new DownloadManager();
+
